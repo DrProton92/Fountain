@@ -10,44 +10,60 @@
 #include <metal_stdlib>
 #include <simd/simd.h>
 
-// Including header shared between this Metal shader code and Swift/C code executing Metal API commands
+// Including header shared between this Metal shader code and Swift/ObjC source
 #import "ShaderTypes.h"
 
 using namespace metal;
 
-typedef struct
+// --- Compute Shader ---
+// Updates particle physics on the GPU
+kernel void particle_compute(device Particle* particles [[buffer(BufferIndexParticles)]],
+                             constant Uniforms& uniforms [[buffer(BufferIndexUniforms)]],
+                             uint id [[thread_position_in_grid]]) 
 {
-    float3 position [[attribute(VertexAttributePosition)]];
-    float2 texCoord [[attribute(VertexAttributeTexcoord)]];
-} Vertex;
+    if (id >= 10000) {
+        return;
+    }
 
-typedef struct
-{
+    // Basic physics: position += velocity
+    particles[id].position += particles[id].velocity;
+    
+    // Age the particle
+    particles[id].life -= 0.005; 
+
+    // If particle "dies", reset it to the center with a new velocity
+    if (particles[id].life <= 0.0) {
+        particles[id].life = 1.0;
+        particles[id].position = float2(0.0, 0.0);
+        
+        // Use the thread index to create a deterministic pseudo-random velocity
+        float angle = float(id) / 1000.0 * 2.0 * M_PI_F;
+        particles[id].velocity = float2(cos(angle), sin(angle)) * 0.01;
+    }
+}
+
+// --- Render Shaders ---
+struct ParticleVertexOutput {
     float4 position [[position]];
-    float2 texCoord;
-} ColorInOut;
+    float4 color;
+    float pointSize [[point_size]];
+};
 
-vertex ColorInOut vertexShader(Vertex in [[stage_in]],
-                               constant Uniforms & uniforms [[ buffer(BufferIndexUniforms) ]])
+vertex ParticleVertexOutput particle_vertex(uint vid [[vertex_id]],
+                                          const device Particle* particles [[buffer(BufferIndexParticles)]],
+                                          constant Uniforms& uniforms [[buffer(BufferIndexUniforms)]]) 
 {
-    ColorInOut out;
-
-    float4 position = float4(in.position, 1.0);
-    out.position = uniforms.projectionMatrix * uniforms.modelViewMatrix * position;
-    out.texCoord = in.texCoord;
-
+    Particle p = particles[vid];
+    ParticleVertexOutput out;
+    
+    // Convert particle position to clip space
+    out.position = uniforms.projectionMatrix * uniforms.modelViewMatrix * float4(p.position, 0.0, 1.0);
+    out.color = p.color;
+    out.pointSize = 5.0; // Size of the particle in pixels
+    
     return out;
 }
 
-fragment float4 fragmentShader(ColorInOut in [[stage_in]],
-                               constant Uniforms & uniforms [[ buffer(BufferIndexUniforms) ]],
-                               texture2d<half> colorMap     [[ texture(TextureIndexColor) ]])
-{
-    constexpr sampler colorSampler(mip_filter::linear,
-                                   mag_filter::linear,
-                                   min_filter::linear);
-
-    half4 colorSample   = colorMap.sample(colorSampler, in.texCoord.xy);
-
-    return float4(colorSample);
+fragment float4 fragmentShader(ParticleVertexOutput in [[stage_in]]) {
+    return in.color;
 }

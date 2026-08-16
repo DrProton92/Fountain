@@ -2,48 +2,40 @@
 //  ShaderTypes.h
 //  ipadgameapp
 //
-//  Created by Dave Schmid on 8/15/26.
-//
 
-//
-//  Header containing types and enum constants shared between Metal shaders and Swift/ObjC source
-//
 #ifndef ShaderTypes_h
 #define ShaderTypes_h
 
 #ifdef __METAL_VERSION__
-#define NS_ENUM(_type, _name) enum _name : _type _name; enum _name : _type
-typedef metal::int32_t EnumBackingType;
+#include <metal_stdlib>
+using namespace metal;
+typedef float2 shared_float2;
+typedef float4 shared_float4;
+typedef float4x4 shared_float4x4;
 #else
-#import <Foundation/Foundation.h>
-typedef NSInteger EnumBackingType;
+#include <simd/simd.h>
+typedef vector_float2 shared_float2;
+typedef vector_float4 shared_float4;
+typedef matrix_float4x4 shared_float4x4;
 #endif
 
-#include <simd/simd.h>
+// Use standard enum types compatible with both Swift and Metal
+typedef enum {
+    BufferIndexParticles = 0,
+    BufferIndexUniforms = 1
+} BufferIndex;
 
-typedef NS_ENUM(EnumBackingType, BufferIndex)
-{
-    BufferIndexMeshPositions = 0,
-    BufferIndexMeshGenerics  = 1,
-    BufferIndexUniforms      = 2
-};
+// Shared CPU/GPU layout types.
+typedef struct {
+    shared_float2 position;
+    shared_float2 velocity;
+    shared_float4 color;
+    float life;
+} Particle;
 
-typedef NS_ENUM(EnumBackingType, VertexAttribute)
-{
-    VertexAttributePosition  = 0,
-    VertexAttributeTexcoord  = 1,
-};
-
-typedef NS_ENUM(EnumBackingType, TextureIndex)
-{
-    TextureIndexColor    = 0,
-};
-
-typedef struct
-{
-    matrix_float4x4 projectionMatrix;
-    matrix_float4x4 modelViewMatrix;
+typedef struct {
+    shared_float4x4 projectionMatrix;
+    shared_float4x4 modelViewMatrix;
 } Uniforms;
 
 #endif /* ShaderTypes_h */
-
