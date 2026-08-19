@@ -10,13 +10,18 @@
 #include <metal_stdlib>
 using namespace metal;
 typedef float2 shared_float2;
+typedef float3 shared_float3;
 typedef float4 shared_float4;
 typedef float4x4 shared_float4x4;
+typedef uint shared_uint;
 #else
+#include <stdint.h>
 #include <simd/simd.h>
 typedef vector_float2 shared_float2;
+typedef vector_float3 shared_float3;
 typedef vector_float4 shared_float4;
 typedef matrix_float4x4 shared_float4x4;
+typedef uint32_t shared_uint;
 #endif
 
 // Use standard enum types compatible with both Swift and Metal
@@ -27,15 +32,19 @@ typedef enum {
 
 // Shared CPU/GPU layout types.
 typedef struct {
-    shared_float2 position;
-    shared_float2 velocity;
+    shared_float3 position;
+    shared_float3 velocity;
     shared_float4 color;
     float life;
 } Particle;
 
 typedef struct {
     shared_float4x4 projectionMatrix;
-    shared_float4x4 modelViewMatrix;
+    shared_float4x4 viewMatrix;
+    shared_uint particleCount;
+    shared_uint _padding0;
+    shared_uint _padding1;
+    shared_uint _padding2;
 } Uniforms;
 
 #endif /* ShaderTypes_h */

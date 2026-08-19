@@ -15,17 +15,20 @@
 
 using namespace metal;
 
+constant uint kMaxParticleCount = 100000000;
+
 // --- Compute Shader ---
 // Updates particle physics on the GPU
 kernel void particle_compute(device Particle* particles [[buffer(BufferIndexParticles)]],
                              constant Uniforms& uniforms [[buffer(BufferIndexUniforms)]],
                              uint id [[thread_position_in_grid]]) 
 {
-    if (id >= 10000) {
+    if (id >= kMaxParticleCount || id >= uniforms.particleCount) {
         return;
     }
 
-    // Basic physics: position += velocity
+    // Simple 3D fountain physics with gravity.
+    particles[id].velocity.y -= 0.0009;
     particles[id].position += particles[id].velocity;
     
     // Age the particle
@@ -34,11 +37,13 @@ kernel void particle_compute(device Particle* particles [[buffer(BufferIndexPart
     // If particle "dies", reset it to the center with a new velocity
     if (particles[id].life <= 0.0) {
         particles[id].life = 1.0;
-        particles[id].position = float2(0.0, 0.0);
+        particles[id].position = float3(0.0, 0.0, 0.0);
         
-        // Use the thread index to create a deterministic pseudo-random velocity
+        // Deterministic spread using thread index.
         float angle = float(id) / 1000.0 * 2.0 * M_PI_F;
-        particles[id].velocity = float2(cos(angle), sin(angle)) * 0.01;
+        float radial = 0.008 + 0.004 * fract(sin(float(id) * 12.9898) * 43758.5453);
+        float upward = 0.03 + 0.02 * fract(sin(float(id) * 78.233) * 43758.5453);
+        particles[id].velocity = float3(cos(angle) * radial, upward, sin(angle) * radial);
     }
 }
 
@@ -57,7 +62,7 @@ vertex ParticleVertexOutput particle_vertex(uint vid [[vertex_id]],
     ParticleVertexOutput out;
     
     // Convert particle position to clip space
-    out.position = uniforms.projectionMatrix * uniforms.modelViewMatrix * float4(p.position, 0.0, 1.0);
+    out.position = uniforms.projectionMatrix * uniforms.viewMatrix * float4(p.position, 1.0);
     out.color = p.color;
     out.pointSize = 5.0; // Size of the particle in pixels
     

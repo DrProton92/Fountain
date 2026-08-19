@@ -12,7 +12,9 @@ import simd
 // The size of our uniform structure
 let alignedUniformsSize = (MemoryLayout<Uniforms>.size + 0xFF) & -0x100
 let maxBuffersInFlight = 3
-let particleCount = 10000
+let maxParticleCount = 100_000_000
+let defaultParticleCount = 10000
+let preferredParticleBufferBudgetBytes = 256 * 1024 * 1024
 
 enum RendererError: Error {
     case pipelineCreationFailed
@@ -34,8 +36,13 @@ class Renderer: NSObject, MTKViewDelegate {
     let inFlightSemaphore = DispatchSemaphore(value: maxBuffersInFlight)
     var uniformBufferOffset = 0
     var uniformBufferIndex = 0
+    private(set) var maxRenderableParticleCount = defaultParticleCount
+    private(set) var activeParticleCount = defaultParticleCount
     
     var projectionMatrix: matrix_float4x4 = matrix_float4x4()
+    var cameraYaw: Float = 0
+    var cameraPitch: Float = 0.35
+    var cameraDistance: Float = 3.5
     
     @MainActor
     init?(metalKitView: MTKView) {
@@ -51,17 +58,35 @@ class Renderer: NSObject, MTKViewDelegate {
         self.uniformBufferRawPointer = uBuffer.contents()
         
         // 2. Setup Particle Buffer
-        let particleBufferSize = particleCount * MemoryLayout<Particle>.stride
-        guard let pBuffer = self.device.makeBuffer(length: particleBufferSize, options: .storageModeShared) else { return nil }
+        let particleStride = MemoryLayout<Particle>.stride
+        let deviceCapByLength = Int(self.device.maxBufferLength) / particleStride
+        let preferredCapByBudget = preferredParticleBufferBudgetBytes / particleStride
+        var capacity = min(maxParticleCount, deviceCapByLength, preferredCapByBudget)
+        capacity = max(capacity, defaultParticleCount)
+
+        var allocatedBuffer: MTLBuffer?
+        var allocatedCapacity = capacity
+        while allocatedBuffer == nil && allocatedCapacity >= defaultParticleCount {
+            allocatedBuffer = self.device.makeBuffer(length: allocatedCapacity * particleStride, options: .storageModeShared)
+            if allocatedBuffer == nil {
+                allocatedCapacity /= 2
+            }
+        }
+
+        guard let pBuffer = allocatedBuffer else { return nil }
         self.particleBuffer = pBuffer
+        self.maxRenderableParticleCount = allocatedCapacity
+        self.activeParticleCount = min(defaultParticleCount, allocatedCapacity)
         
         // Initialize particles using direct property assignment
-        let particlesPtr = particleBuffer.contents().bindMemory(to: Particle.self, capacity: particleCount)
-        for i in 0..<particleCount {
+        let particlesPtr = particleBuffer.contents().bindMemory(to: Particle.self, capacity: maxRenderableParticleCount)
+        for i in 0..<maxRenderableParticleCount {
             let angle = Float(i) / 1000.0 * 2.0 * Float.pi
             
-            particlesPtr[i].position = SIMD2<Float>(0, 0)
-            particlesPtr[i].velocity = SIMD2<Float>(cos(angle), sin(angle)) * 0.01
+            let radial = Float.random(in: 0.008...0.012)
+            let upward = Float.random(in: 0.03...0.05)
+            particlesPtr[i].position = SIMD3<Float>(0, 0, 0)
+            particlesPtr[i].velocity = SIMD3<Float>(cos(angle) * radial, upward, sin(angle) * radial)
             particlesPtr[i].color = SIMD4<Float>(0.2, 0.6, 1.0, 1.0)
             particlesPtr[i].life = Float.random(in: 0.1...1.0)
         }
@@ -96,7 +121,11 @@ class Renderer: NSObject, MTKViewDelegate {
     func updateGameState() {
         var frameUniforms = Uniforms()
         frameUniforms.projectionMatrix = projectionMatrix
-        frameUniforms.modelViewMatrix = matrix4x4_translation(0, 0, -1)
+        frameUniforms.viewMatrix = makeViewMatrix()
+        frameUniforms.particleCount = UInt32(activeParticleCount)
+        frameUniforms._padding0 = 0
+        frameUniforms._padding1 = 0
+        frameUniforms._padding2 = 0
 
         // Write one frame's uniforms into the ring-buffer slot.
         let destination = uniformBufferRawPointer.advanced(by: uniformBufferOffset)
@@ -129,7 +158,7 @@ class Renderer: NSObject, MTKViewDelegate {
             
             let threadsPerGroup = MTLSize(width: 64, height: 1, depth: 1)
             let threadgroups = MTLSize(
-                width: (particleCount + threadsPerGroup.width - 1) / threadsPerGroup.width,
+                width: (activeParticleCount + threadsPerGroup.width - 1) / threadsPerGroup.width,
                 height: 1,
                 depth: 1
             )
@@ -149,11 +178,38 @@ class Renderer: NSObject, MTKViewDelegate {
             renderEncoder.setVertexBuffer(particleBuffer, offset: 0, index: 0)
             renderEncoder.setVertexBuffer(dynamicUniformBuffer, offset: uniformBufferOffset, index: 1) // BufferIndexUniforms
             
-        renderEncoder.drawPrimitives(type: .point, vertexStart: 0, vertexCount: particleCount)
+        renderEncoder.drawPrimitives(type: .point, vertexStart: 0, vertexCount: activeParticleCount)
         renderEncoder.endEncoding()
         commandBuffer.present(drawable)
         
         commandBuffer.commit()
+    }
+
+    func updateCameraRotation(deltaX: Float, deltaY: Float) {
+        let sensitivity: Float = 0.01
+        cameraYaw += deltaX * sensitivity
+        cameraPitch += deltaY * sensitivity
+        cameraPitch = min(max(cameraPitch, -1.3), 1.3)
+    }
+
+    func updateCameraZoom(scaleDelta: Float) {
+        let zoomFactor: Float = 1.0 + (scaleDelta * 0.25)
+        cameraDistance /= max(0.2, zoomFactor)
+        cameraDistance = min(max(cameraDistance, 1.5), 12.0)
+    }
+
+    func setParticleCount(_ count: Int) {
+        activeParticleCount = min(max(count, 1), maxRenderableParticleCount)
+    }
+
+    private func makeViewMatrix() -> matrix_float4x4 {
+        // Orbit the camera around the origin and always look back at the fountain source.
+        let target = SIMD3<Float>(0, 0, 0)
+        let x = cameraDistance * cos(cameraPitch) * sin(cameraYaw)
+        let y = cameraDistance * sin(cameraPitch)
+        let z = cameraDistance * cos(cameraPitch) * cos(cameraYaw)
+        let eye = SIMD3<Float>(x, y, z)
+        return matrix_look_at_right_hand(eye: eye, target: target, up: SIMD3<Float>(0, 1, 0))
     }
     
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
@@ -184,6 +240,43 @@ func matrix_perspective_right_hand(fovyRadians fovy: Float, aspectRatio: Float, 
                                          vector_float4( 0, ys, 0,   0),
                                          vector_float4( 0,  0, zs, -1),
                                          vector_float4( 0,  0, zs * nearZ, 0)))
+}
+
+func matrix4x4_rotation(radians: Float, axis: SIMD3<Float>) -> matrix_float4x4 {
+    let normalizedAxis = simd_normalize(axis)
+    let x = normalizedAxis.x
+    let y = normalizedAxis.y
+    let z = normalizedAxis.z
+    let c = cos(radians)
+    let s = sin(radians)
+    let mc = 1.0 - c
+
+    return matrix_float4x4(columns: (
+        SIMD4<Float>(c + x * x * mc, x * y * mc + z * s, x * z * mc - y * s, 0),
+        SIMD4<Float>(y * x * mc - z * s, c + y * y * mc, y * z * mc + x * s, 0),
+        SIMD4<Float>(z * x * mc + y * s, z * y * mc - x * s, c + z * z * mc, 0),
+        SIMD4<Float>(0, 0, 0, 1)
+    ))
+}
+
+func matrix_look_at_right_hand(eye: SIMD3<Float>, target: SIMD3<Float>, up: SIMD3<Float>) -> matrix_float4x4 {
+    let zAxis = simd_normalize(eye - target)
+    let xAxis = simd_normalize(simd_cross(up, zAxis))
+    let yAxis = simd_cross(zAxis, xAxis)
+
+    let translation = SIMD3<Float>(
+        -simd_dot(xAxis, eye),
+        -simd_dot(yAxis, eye),
+        -simd_dot(zAxis, eye)
+    )
+
+    return matrix_float4x4(columns: (
+        SIMD4<Float>(xAxis.x, yAxis.x, zAxis.x, 0),
+        SIMD4<Float>(xAxis.y, yAxis.y, zAxis.y, 0),
+        SIMD4<Float>(xAxis.z, yAxis.z, zAxis.z, 0),
+        SIMD4<Float>(translation.x, translation.y, translation.z, 1)
+    ))
+
 }
 
 func radians_from_degrees(_ degrees: Float) -> Float {
