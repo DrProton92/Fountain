@@ -20,6 +20,122 @@ enum RendererError: Error {
     case pipelineCreationFailed
 }
 
+enum ParticleColorStyle: Int, CaseIterable {
+    case rainbow
+    case fire
+    case pastel
+    case neon
+
+    var displayName: String {
+        switch self {
+        case .rainbow: return "Rainbow"
+        case .fire: return "Fire"
+        case .pastel: return "Pastel"
+        case .neon: return "Neon"
+        }
+    }
+}
+
+enum ParticleSizeMode: Int, CaseIterable {
+    case constant
+    case random
+
+    var displayName: String {
+        switch self {
+        case .constant: return "Constant"
+        case .random: return "Random Distribution"
+        }
+    }
+}
+
+enum SizeDistributionPreset: Int, CaseIterable {
+    case gaussian
+    case skewedLeft
+    case skewedRight
+
+    var displayName: String {
+        switch self {
+        case .gaussian: return "Gaussian (Center)"
+        case .skewedLeft: return "Skewed Left"
+        case .skewedRight: return "Skewed Right"
+        }
+    }
+}
+
+struct SizeDistribution {
+    var controlPoints: [SizeDistributionPoint] = []
+    
+    init() {
+        // Initialize with a uniform distribution
+        self.controlPoints = [
+            SizeDistributionPoint(x: 0.0, y: 1.0),
+            SizeDistributionPoint(x: 1.0, y: 1.0)
+        ]
+    }
+    
+    mutating func applyPreset(_ preset: SizeDistributionPreset) {
+        switch preset {
+        case .gaussian:
+            // Bell curve centered
+            self.controlPoints = [
+                SizeDistributionPoint(x: 0.0, y: 0.0),
+                SizeDistributionPoint(x: 0.25, y: 0.5),
+                SizeDistributionPoint(x: 0.5, y: 1.0),
+                SizeDistributionPoint(x: 0.75, y: 0.5),
+                SizeDistributionPoint(x: 1.0, y: 0.0)
+            ]
+        case .skewedLeft:
+            // More weight on the left
+            self.controlPoints = [
+                SizeDistributionPoint(x: 0.0, y: 1.0),
+                SizeDistributionPoint(x: 0.3, y: 0.8),
+                SizeDistributionPoint(x: 0.7, y: 0.3),
+                SizeDistributionPoint(x: 1.0, y: 0.0)
+            ]
+        case .skewedRight:
+            // More weight on the right
+            self.controlPoints = [
+                SizeDistributionPoint(x: 0.0, y: 0.0),
+                SizeDistributionPoint(x: 0.3, y: 0.3),
+                SizeDistributionPoint(x: 0.7, y: 0.8),
+                SizeDistributionPoint(x: 1.0, y: 1.0)
+            ]
+        }
+    }
+    
+    func sampleValue(at normalized: Float) -> Float {
+        guard !controlPoints.isEmpty else { return 0.5 }
+        guard controlPoints.count > 1 else { return controlPoints[0].y }
+        
+        let clamped = max(0, min(normalized, 1.0))
+        
+        // Find the two control points to interpolate between
+        var left = controlPoints[0]
+        var right = controlPoints[1]
+        
+        for i in 0..<(controlPoints.count - 1) {
+            if controlPoints[i].x <= clamped && clamped <= controlPoints[i + 1].x {
+                left = controlPoints[i]
+                right = controlPoints[i + 1]
+                break
+            }
+        }
+        
+        // Linear interpolation
+        let range = right.x - left.x
+        if range < 0.0001 {
+            return left.y
+        }
+        let t = (clamped - left.x) / range
+        return left.y + (right.y - left.y) * t
+    }
+}
+
+struct SizeDistributionPoint {
+    var x: Float // 0.0 to 1.0
+    var y: Float // 0.0 to 1.0 (probability/weight)
+}
+
 class Renderer: NSObject, MTKViewDelegate {
     
     public let device: MTLDevice
@@ -38,6 +154,14 @@ class Renderer: NSObject, MTKViewDelegate {
     var uniformBufferIndex = 0
     private(set) var maxRenderableParticleCount = defaultParticleCount
     private(set) var activeParticleCount = defaultParticleCount
+    private(set) var particleColorStyle: ParticleColorStyle = .rainbow
+    
+    // Particle size configuration
+    private(set) var particleSizeMode: ParticleSizeMode = .constant
+    private(set) var constantParticleSize: Float = 5.0
+    private(set) var sizeDistribution: SizeDistribution = SizeDistribution()
+    private(set) var minSizeRange: Float = 1.0
+    private(set) var maxSizeRange: Float = 10.0
     
     var projectionMatrix: matrix_float4x4 = matrix_float4x4()
     var cameraYaw: Float = 0
@@ -87,8 +211,9 @@ class Renderer: NSObject, MTKViewDelegate {
             let upward = Float.random(in: 0.03...0.05)
             particlesPtr[i].position = SIMD3<Float>(0, 0, 0)
             particlesPtr[i].velocity = SIMD3<Float>(cos(angle) * radial, upward, sin(angle) * radial)
-            particlesPtr[i].color = SIMD4<Float>(0.2, 0.6, 1.0, 1.0)
+            particlesPtr[i].color = Renderer.color(for: particleColorStyle)
             particlesPtr[i].life = Float.random(in: 0.1...1.0)
+            particlesPtr[i].size = constantParticleSize
         }
         
         // 3. Setup Pipelines
@@ -192,14 +317,79 @@ class Renderer: NSObject, MTKViewDelegate {
         cameraPitch = min(max(cameraPitch, -1.3), 1.3)
     }
 
-    func updateCameraZoom(scaleDelta: Float) {
-        let zoomFactor: Float = 1.0 + (scaleDelta * 0.25)
-        cameraDistance /= max(0.2, zoomFactor)
-        cameraDistance = min(max(cameraDistance, 1.5), 12.0)
+    func updateCameraZoom(scaleFactor: Float) {
+        // scaleFactor is the delta scale from the last frame
+        // > 1.0 means spreading/zooming in, < 1.0 means pinching/zooming out
+        // Apply the scale factor to the distance
+        let newDistance = cameraDistance / scaleFactor
+        cameraDistance = min(max(newDistance, 1.5), 12.0)
     }
 
     func setParticleCount(_ count: Int) {
-        activeParticleCount = min(max(count, 1), maxRenderableParticleCount)
+        let clamped = min(max(count, 1), maxRenderableParticleCount)
+         activeParticleCount = clamped
+         regenerateParticleSizes()  // Assign sizes to new particles
+     }
+
+    func setParticleColorStyle(_ style: ParticleColorStyle) {
+        guard style != particleColorStyle else { return }
+         particleColorStyle = style
+         applyColorStyle(in: 0..<activeParticleCount)
+     }
+
+    func setParticleSizeMode(_ mode: ParticleSizeMode) {
+        particleSizeMode = mode
+        regenerateParticleSizes()
+    }
+
+    func setConstantParticleSize(_ size: Float) {
+        let clamped = max(0.5, min(size, 50.0))
+        constantParticleSize = clamped
+        if particleSizeMode == .constant {
+            regenerateParticleSizes()
+        }
+    }
+
+    func setSizeDistribution(_ distribution: SizeDistribution) {
+        sizeDistribution = distribution
+        if particleSizeMode == .random {
+            regenerateParticleSizes()
+        }
+    }
+
+    func applySizeDistributionPreset(_ preset: SizeDistributionPreset) {
+        sizeDistribution.applyPreset(preset)
+        if particleSizeMode == .random {
+            regenerateParticleSizes()
+        }
+    }
+
+    func setSizeRange(_ minValue: Float, _ maxValue: Float) {
+        let minClamped = max(0.5, min(minValue, 50.0))
+        let maxClamped = max(0.5, min(maxValue, 50.0))
+        minSizeRange = min(minClamped, maxClamped)
+        maxSizeRange = max(minClamped, maxClamped)
+        if particleSizeMode == .random {
+            regenerateParticleSizes()
+        }
+    }
+
+    private func regenerateParticleSizes() {
+        let particlesPtr = particleBuffer.contents().bindMemory(to: Particle.self, capacity: maxRenderableParticleCount)
+        
+        switch particleSizeMode {
+        case .constant:
+            for i in 0..<activeParticleCount {
+                particlesPtr[i].size = constantParticleSize
+            }
+        case .random:
+            let sizeRange = maxSizeRange - minSizeRange
+            for i in 0..<activeParticleCount {
+                let randomValue = Float.random(in: 0.0...1.0)
+                let distributionWeight = sizeDistribution.sampleValue(at: randomValue)
+                particlesPtr[i].size = minSizeRange + (sizeRange * distributionWeight)
+            }
+        }
     }
 
     private func makeViewMatrix() -> matrix_float4x4 {
@@ -211,7 +401,51 @@ class Renderer: NSObject, MTKViewDelegate {
         let eye = SIMD3<Float>(x, y, z)
         return matrix_look_at_right_hand(eye: eye, target: target, up: SIMD3<Float>(0, 1, 0))
     }
-    
+
+    private func applyColorStyle(in range: Range<Int>) {
+        guard !range.isEmpty else { return }
+        let lowerBound = max(0, range.lowerBound)
+        let upperBound = min(range.upperBound, maxRenderableParticleCount)
+        guard lowerBound < upperBound else { return }
+
+        let particlesPtr = particleBuffer.contents().bindMemory(to: Particle.self, capacity: maxRenderableParticleCount)
+        for i in lowerBound..<upperBound {
+            particlesPtr[i].color = Renderer.color(for: particleColorStyle)
+        }
+    }
+
+    private static func color(for style: ParticleColorStyle) -> SIMD4<Float> {
+        switch style {
+        case .rainbow:
+            return SIMD4<Float>(
+                Float.random(in: 0.15...1.0),
+                Float.random(in: 0.15...1.0),
+                Float.random(in: 0.15...1.0),
+                1.0
+            )
+        case .fire:
+            return SIMD4<Float>(
+                Float.random(in: 0.85...1.0),
+                Float.random(in: 0.2...0.6),
+                Float.random(in: 0.0...0.2),
+                1.0
+            )
+        case .pastel:
+            return SIMD4<Float>(
+                Float.random(in: 0.65...1.0),
+                Float.random(in: 0.65...1.0),
+                Float.random(in: 0.65...1.0),
+                1.0
+            )
+        case .neon:
+            let channel = Int.random(in: 0...2)
+            var rgb = SIMD3<Float>(repeating: Float.random(in: 0.05...0.2))
+            rgb[channel] = Float.random(in: 0.9...1.0)
+            return SIMD4<Float>(rgb.x, rgb.y, rgb.z, 1.0)
+        }
+    }
+
+    @MainActor
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
         guard size.height > 0 else { return }
         let aspect = Float(size.width) / Float(size.height)

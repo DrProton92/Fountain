@@ -36,6 +36,7 @@ typedef struct {
     shared_float3 velocity;
     shared_float4 color;
     float life;
+    float size;
 } Particle;
 
 typedef struct {

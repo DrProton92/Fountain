@@ -9,14 +9,14 @@ import UIKit
 import MetalKit
 
 // Our iOS specific view controller
-class GameViewController: UIViewController {
+class GameViewController: UIViewController, UIGestureRecognizerDelegate {
 
     var renderer: Renderer!
     var mtkView: MTKView!
     private var menuContainerView: UIView!
     private var startButton: UIButton!
     private var inGameMenuButton: UIButton!
-    private var lastPinchScale: CGFloat = 1.0
+    private var gestureDebugLabel: UILabel!
     private let minParticleCount = 100
 
     override func viewDidLoad() {
@@ -36,7 +36,8 @@ class GameViewController: UIViewController {
         
         mtkView.device = defaultDevice
         mtkView.backgroundColor = UIColor.black
-
+        mtkView.isMultipleTouchEnabled = true
+        mtkView.isUserInteractionEnabled = true
         guard let newRenderer = Renderer(metalKitView: mtkView) else {
             print("Renderer cannot be initialized")
             return
@@ -51,6 +52,34 @@ class GameViewController: UIViewController {
         configureMainMenu()
         configureInGameMenuButton()
         configureCameraGestures()
+        configureGestureDebugLabel()
+    }
+
+    private func configureGestureDebugLabel() {
+        let label = UILabel()
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.numberOfLines = 2
+        label.font = .monospacedSystemFont(ofSize: 12, weight: .medium)
+        label.textColor = .white
+        label.backgroundColor = UIColor.black.withAlphaComponent(0.55)
+        label.layer.cornerRadius = 8
+        label.layer.masksToBounds = true
+        label.textAlignment = .left
+        label.isUserInteractionEnabled = false
+        label.text = "Gesture: idle\nDistance: --"
+        view.addSubview(label)
+        self.gestureDebugLabel = label
+
+        NSLayoutConstraint.activate([
+            label.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -12),
+            label.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 12),
+            label.widthAnchor.constraint(equalToConstant: 190)
+        ])
+    }
+
+    private func updateGestureDebug(_ text: String) {
+        let distanceText = String(format: "%.2f", renderer.cameraDistance)
+        gestureDebugLabel.text = "Gesture: \(text)\nDistance: \(distanceText)"
     }
 
     private func configureMainMenu() {
@@ -130,104 +159,70 @@ class GameViewController: UIViewController {
 
     private func configureCameraGestures() {
         let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
-        pan.maximumNumberOfTouches = 1
-        mtkView.addGestureRecognizer(pan)
+        pan.minimumNumberOfTouches = 1
+        pan.maximumNumberOfTouches = 2
+        pan.cancelsTouchesInView = false
+        pan.delegate = self
 
-        let pinch = UIPinchGestureRecognizer(target: self, action: #selector(handlePinch(_:)))
-        mtkView.addGestureRecognizer(pinch)
+        // Attach to the controller root view so gestures are not dependent on MTKView input quirks.
+        view.addGestureRecognizer(pan)
+        
+        // Add tap gesture to pause/resume
+        let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
+        tap.numberOfTapsRequired = 1
+        tap.numberOfTouchesRequired = 1
+        view.addGestureRecognizer(tap)
     }
-
-    @objc private func handlePan(_ gesture: UIPanGestureRecognizer) {
+    
+    @objc private func handleTap(_ gesture: UITapGestureRecognizer) {
+        // Only handle tap when menu is hidden (game is running)
         guard menuContainerView.isHidden else { return }
-        let translation = gesture.translation(in: mtkView)
-        renderer.updateCameraRotation(deltaX: Float(translation.x), deltaY: Float(translation.y))
-        gesture.setTranslation(.zero, in: mtkView)
+        
+        // Pause/resume the game
+        mtkView.isPaused = true
+        menuContainerView.isHidden = false
     }
-
-    @objc private func handlePinch(_ gesture: UIPinchGestureRecognizer) {
+    
+    @objc private func handlePan(_ gesture: UIPanGestureRecognizer) {
         guard menuContainerView.isHidden else { return }
 
         if gesture.state == .began {
-            lastPinchScale = gesture.scale
-            return
+            if gesture.numberOfTouches >= 2 {
+                updateGestureDebug("zoom began (2-finger drag)")
+            } else {
+                updateGestureDebug("pan began")
+            }
         }
 
-        let delta = gesture.scale - lastPinchScale
-        renderer.updateCameraZoom(scaleDelta: Float(delta))
-        lastPinchScale = gesture.scale
+        if gesture.state == .changed {
+            let translation = gesture.translation(in: mtkView)
+            if gesture.numberOfTouches >= 2 {
+                // Two-finger vertical drag for zoom
+                // Drag UP (negative Y) = zoom in, Drag DOWN (positive Y) = zoom out
+                let zoomDelta = Float(translation.y) * 0.01
+                renderer.updateCameraZoom(scaleFactor: 1.0 - zoomDelta)
+                updateGestureDebug("zoom: \(String(format: "%.1f", translation.y))")
+            } else {
+                // Single finger pan for rotation
+                renderer.updateCameraRotation(deltaX: Float(translation.x), deltaY: Float(translation.y))
+                updateGestureDebug("pan changed")
+            }
+            gesture.setTranslation(.zero, in: mtkView)
+        } else if gesture.state == .ended || gesture.state == .cancelled || gesture.state == .failed {
+            updateGestureDebug(gesture.numberOfTouches >= 2 ? "zoom ended" : "pan ended")
+        }
+    }
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+        false
     }
 
     @objc private func configureTapped() {
-        let alert = UIAlertController(
-            title: "Configure Particles",
-            message: "\n\n\n\n\n\n\n",
-            preferredStyle: .alert
-        )
-
-        let slider = UISlider(frame: .zero)
-        slider.minimumValue = 0
-        slider.maximumValue = 1
-        slider.value = sliderValue(forParticleCount: renderer.activeParticleCount)
-        slider.translatesAutoresizingMaskIntoConstraints = false
-
-        let valueField = UITextField(frame: .zero)
-        valueField.translatesAutoresizingMaskIntoConstraints = false
-        valueField.borderStyle = .roundedRect
-        valueField.keyboardType = .numberPad
-        valueField.textAlignment = .center
-        valueField.text = "\(renderer.activeParticleCount)"
-
-        let valueLabel = UILabel(frame: .zero)
-        valueLabel.translatesAutoresizingMaskIntoConstraints = false
-        valueLabel.textAlignment = .center
-        valueLabel.textColor = .secondaryLabel
-        valueLabel.font = .systemFont(ofSize: 14, weight: .medium)
-        valueLabel.text = "Particles: \(formattedCount(renderer.activeParticleCount))"
-
-        slider.addAction(UIAction { _ in
-            let count = self.particleCount(forSliderValue: slider.value)
-            valueLabel.text = "Particles: \(self.formattedCount(count))"
-            valueField.text = "\(count)"
-        }, for: .valueChanged)
-
-        valueField.addAction(UIAction { _ in
-            guard let text = valueField.text, let entered = Int(text) else { return }
-            let clamped = min(max(entered, self.minParticleCount), maxParticleCount)
-            valueField.text = "\(clamped)"
-            valueLabel.text = "Particles: \(self.formattedCount(clamped))"
-            slider.value = self.sliderValue(forParticleCount: clamped)
-        }, for: .editingDidEnd)
-
-        alert.view.addSubview(slider)
-        alert.view.addSubview(valueField)
-        alert.view.addSubview(valueLabel)
-
-        NSLayoutConstraint.activate([
-            slider.leadingAnchor.constraint(equalTo: alert.view.leadingAnchor, constant: 18),
-            slider.trailingAnchor.constraint(equalTo: valueField.leadingAnchor, constant: -12),
-            slider.topAnchor.constraint(equalTo: alert.view.topAnchor, constant: 78),
-
-            valueField.widthAnchor.constraint(equalToConstant: 96),
-            valueField.trailingAnchor.constraint(equalTo: alert.view.trailingAnchor, constant: -18),
-            valueField.centerYAnchor.constraint(equalTo: slider.centerYAnchor),
-
-            valueLabel.topAnchor.constraint(equalTo: slider.bottomAnchor, constant: 8),
-            valueLabel.leadingAnchor.constraint(equalTo: alert.view.leadingAnchor, constant: 18),
-            valueLabel.trailingAnchor.constraint(equalTo: alert.view.trailingAnchor, constant: -18)
-        ])
-
-        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-        alert.addAction(UIAlertAction(title: "Apply", style: .default) { [weak self] _ in
-            guard let self else { return }
-            let valueFromField = Int(valueField.text ?? "")
-            let value = min(max(valueFromField ?? self.particleCount(forSliderValue: slider.value), self.minParticleCount), maxParticleCount)
-            self.renderer.setParticleCount(value)
-            if self.renderer.activeParticleCount != value {
-                self.showCapacityNotice(requested: value, actual: self.renderer.activeParticleCount)
-            }
-        })
-
-        present(alert, animated: true)
+        let configVC = ConfigurationViewController()
+        configVC.renderer = renderer
+        let navController = UINavigationController(rootViewController: configVC)
+        navController.modalPresentationStyle = .fullScreen
+        present(navController, animated: true)
     }
 
     private func particleCount(forSliderValue value: Float) -> Int {
@@ -281,16 +276,6 @@ class GameViewController: UIViewController {
         let formatter = NumberFormatter()
         formatter.numberStyle = .decimal
         return formatter.string(from: NSNumber(value: value)) ?? "\(value)"
-    }
-
-    private func showCapacityNotice(requested: Int, actual: Int) {
-        let alert = UIAlertController(
-            title: "Capacity Limit",
-            message: "Requested \(formattedCount(requested)) particles, but this device currently supports \(formattedCount(actual)) with available GPU buffer space.",
-            preferredStyle: .alert
-        )
-        alert.addAction(UIAlertAction(title: "OK", style: .default))
-        present(alert, animated: true)
     }
 
 }

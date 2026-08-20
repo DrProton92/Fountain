@@ -34,17 +34,18 @@ kernel void particle_compute(device Particle* particles [[buffer(BufferIndexPart
     // Age the particle
     particles[id].life -= 0.005; 
 
-    // If particle "dies", reset it to the center with a new velocity
-    if (particles[id].life <= 0.0) {
-        particles[id].life = 1.0;
-        particles[id].position = float3(0.0, 0.0, 0.0);
-        
-        // Deterministic spread using thread index.
-        float angle = float(id) / 1000.0 * 2.0 * M_PI_F;
-        float radial = 0.008 + 0.004 * fract(sin(float(id) * 12.9898) * 43758.5453);
-        float upward = 0.03 + 0.02 * fract(sin(float(id) * 78.233) * 43758.5453);
-        particles[id].velocity = float3(cos(angle) * radial, upward, sin(angle) * radial);
-    }
+     // If particle "dies", reset it to the center with a new velocity
+     if (particles[id].life <= 0.0) {
+         particles[id].life = 1.0;
+         particles[id].position = float3(0.0, 0.0, 0.0);
+         
+         // Deterministic spread using thread index.
+         float angle = float(id) / 1000.0 * 2.0 * M_PI_F;
+         float radial = 0.008 + 0.004 * fract(sin(float(id) * 12.9898) * 43758.5453);
+         float upward = 0.03 + 0.02 * fract(sin(float(id) * 78.233) * 43758.5453);
+         particles[id].velocity = float3(cos(angle) * radial, upward, sin(angle) * radial);
+         // Size will be set by the CPU based on size configuration
+     }
 }
 
 // --- Render Shaders ---
@@ -55,8 +56,8 @@ struct ParticleVertexOutput {
 };
 
 vertex ParticleVertexOutput particle_vertex(uint vid [[vertex_id]],
-                                          const device Particle* particles [[buffer(BufferIndexParticles)]],
-                                          constant Uniforms& uniforms [[buffer(BufferIndexUniforms)]]) 
+                                           const device Particle* particles [[buffer(BufferIndexParticles)]],
+                                           constant Uniforms& uniforms [[buffer(BufferIndexUniforms)]]) 
 {
     Particle p = particles[vid];
     ParticleVertexOutput out;
@@ -64,7 +65,7 @@ vertex ParticleVertexOutput particle_vertex(uint vid [[vertex_id]],
     // Convert particle position to clip space
     out.position = uniforms.projectionMatrix * uniforms.viewMatrix * float4(p.position, 1.0);
     out.color = p.color;
-    out.pointSize = 5.0; // Size of the particle in pixels
+    out.pointSize = p.size;
     
     return out;
 }
