@@ -13,11 +13,12 @@ class GameViewController: UIViewController, UIGestureRecognizerDelegate {
 
     var renderer: Renderer!
     var mtkView: MTKView!
-    private var menuContainerView: UIView!
-    private var startButton: UIButton!
     private var inGameMenuButton: UIButton!
     private var gestureDebugLabel: UILabel!
-    private let minParticleCount = 100
+    private var hasPresentedInitialConfiguration = false
+    private var shouldShowConfigurationAfterInterruption = false
+    private var previousPinchScale: CGFloat = 1.0
+    private var lastConfigurationCategory: ConfigurationCategory = .general
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -47,12 +48,35 @@ class GameViewController: UIViewController, UIGestureRecognizerDelegate {
         mtkView.delegate = renderer
         renderer.mtkView(mtkView, drawableSizeWillChange: mtkView.drawableSize)
 
-        // Start paused and show menu first.
+        // Start paused and show configuration first.
         mtkView.isPaused = true
-        configureMainMenu()
         configureInGameMenuButton()
         configureCameraGestures()
         configureGestureDebugLabel()
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleWillResignActive),
+            name: UIApplication.willResignActiveNotification,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleDidBecomeActive),
+            name: UIApplication.didBecomeActiveNotification,
+            object: nil
+        )
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        guard !hasPresentedInitialConfiguration else { return }
+        hasPresentedInitialConfiguration = true
+        presentConfigurationScreen(showCancelButton: false, doneTitle: "Start")
     }
 
     private func configureGestureDebugLabel() {
@@ -82,59 +106,6 @@ class GameViewController: UIViewController, UIGestureRecognizerDelegate {
         gestureDebugLabel.text = "Gesture: \(text)\nDistance: \(distanceText)"
     }
 
-    private func configureMainMenu() {
-        let container = UIView()
-        container.translatesAutoresizingMaskIntoConstraints = false
-        container.backgroundColor = UIColor.black.withAlphaComponent(0.65)
-        view.addSubview(container)
-        self.menuContainerView = container
-
-        let titleLabel = UILabel()
-        titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.text = "Particle Fountain"
-        titleLabel.textColor = .white
-        titleLabel.font = .boldSystemFont(ofSize: 34)
-        titleLabel.textAlignment = .center
-
-        let startButton = UIButton(type: .system)
-        startButton.translatesAutoresizingMaskIntoConstraints = false
-        startButton.titleLabel?.font = .boldSystemFont(ofSize: 22)
-        styleMenuButton(startButton, title: "Start", color: .systemBlue)
-        startButton.addTarget(self, action: #selector(startGameTapped), for: .touchUpInside)
-        self.startButton = startButton
-
-        let configureButton = UIButton(type: .system)
-        configureButton.translatesAutoresizingMaskIntoConstraints = false
-        configureButton.titleLabel?.font = .boldSystemFont(ofSize: 22)
-        styleMenuButton(configureButton, title: "Configure", color: .systemGray)
-        configureButton.addTarget(self, action: #selector(configureTapped), for: .touchUpInside)
-
-        let stack = UIStackView(arrangedSubviews: [titleLabel, startButton, configureButton])
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        stack.axis = .vertical
-        stack.spacing = 18
-        stack.alignment = .fill
-        container.addSubview(stack)
-
-        NSLayoutConstraint.activate([
-            container.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            container.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            container.topAnchor.constraint(equalTo: view.topAnchor),
-            container.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-
-            stack.centerXAnchor.constraint(equalTo: container.centerXAnchor),
-            stack.centerYAnchor.constraint(equalTo: container.centerYAnchor),
-            stack.widthAnchor.constraint(equalToConstant: 280)
-        ])
-    }
-
-    @objc private func startGameTapped() {
-        menuContainerView.isHidden = true
-        setButtonTitle(startButton, "Resume")
-        inGameMenuButton.isHidden = false
-        mtkView.isPaused = false
-    }
-
     private func configureInGameMenuButton() {
         let button = UIButton(type: .system)
         button.translatesAutoresizingMaskIntoConstraints = false
@@ -153,14 +124,13 @@ class GameViewController: UIViewController, UIGestureRecognizerDelegate {
     }
 
     @objc private func showMenuTapped() {
-        mtkView.isPaused = true
-        menuContainerView.isHidden = false
+        presentConfigurationScreen(showCancelButton: true, doneTitle: "Resume")
     }
 
     private func configureCameraGestures() {
         let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
         pan.minimumNumberOfTouches = 1
-        pan.maximumNumberOfTouches = 2
+        pan.maximumNumberOfTouches = 1
         pan.cancelsTouchesInView = false
         pan.delegate = self
 
@@ -172,44 +142,51 @@ class GameViewController: UIViewController, UIGestureRecognizerDelegate {
         tap.numberOfTapsRequired = 1
         tap.numberOfTouchesRequired = 1
         view.addGestureRecognizer(tap)
+
+        let pinch = UIPinchGestureRecognizer(target: self, action: #selector(handlePinch(_:)))
+        pinch.delegate = self
+        view.addGestureRecognizer(pinch)
     }
     
     @objc private func handleTap(_ gesture: UITapGestureRecognizer) {
-        // Only handle tap when menu is hidden (game is running)
-        guard menuContainerView.isHidden else { return }
-        
-        // Pause/resume the game
-        mtkView.isPaused = true
-        menuContainerView.isHidden = false
+        guard !mtkView.isPaused, presentedViewController == nil else { return }
+        presentConfigurationScreen(showCancelButton: true, doneTitle: "Resume")
     }
     
     @objc private func handlePan(_ gesture: UIPanGestureRecognizer) {
-        guard menuContainerView.isHidden else { return }
+        guard !mtkView.isPaused, presentedViewController == nil else { return }
 
         if gesture.state == .began {
-            if gesture.numberOfTouches >= 2 {
-                updateGestureDebug("zoom began (2-finger drag)")
-            } else {
-                updateGestureDebug("pan began")
-            }
+            updateGestureDebug("pan began")
         }
 
         if gesture.state == .changed {
             let translation = gesture.translation(in: mtkView)
-            if gesture.numberOfTouches >= 2 {
-                // Two-finger vertical drag for zoom
-                // Drag UP (negative Y) = zoom in, Drag DOWN (positive Y) = zoom out
-                let zoomDelta = Float(translation.y) * 0.01
-                renderer.updateCameraZoom(scaleFactor: 1.0 - zoomDelta)
-                updateGestureDebug("zoom: \(String(format: "%.1f", translation.y))")
-            } else {
-                // Single finger pan for rotation
-                renderer.updateCameraRotation(deltaX: Float(translation.x), deltaY: Float(translation.y))
-                updateGestureDebug("pan changed")
-            }
+            renderer.updateCameraRotation(deltaX: Float(translation.x), deltaY: Float(translation.y))
+            updateGestureDebug("pan changed")
             gesture.setTranslation(.zero, in: mtkView)
         } else if gesture.state == .ended || gesture.state == .cancelled || gesture.state == .failed {
-            updateGestureDebug(gesture.numberOfTouches >= 2 ? "zoom ended" : "pan ended")
+            updateGestureDebug("pan ended")
+        }
+    }
+
+    @objc private func handlePinch(_ gesture: UIPinchGestureRecognizer) {
+        guard !mtkView.isPaused, presentedViewController == nil else { return }
+
+        switch gesture.state {
+        case .began:
+            previousPinchScale = gesture.scale
+            updateGestureDebug("zoom began (pinch)")
+        case .changed:
+            let deltaScale = gesture.scale / previousPinchScale
+            renderer.updateCameraZoom(scaleFactor: Float(deltaScale))
+            previousPinchScale = gesture.scale
+            updateGestureDebug("zoom changed")
+        case .ended, .cancelled, .failed:
+            previousPinchScale = 1.0
+            updateGestureDebug("zoom ended")
+        default:
+            break
         }
     }
 
@@ -218,26 +195,53 @@ class GameViewController: UIViewController, UIGestureRecognizerDelegate {
     }
 
     @objc private func configureTapped() {
+        presentConfigurationScreen(showCancelButton: true, doneTitle: "Resume")
+    }
+
+    @objc private func handleWillResignActive() {
+        guard !mtkView.isPaused else { return }
+        shouldShowConfigurationAfterInterruption = true
+        mtkView.isPaused = true
+        inGameMenuButton.isHidden = true
+    }
+
+    @objc private func handleDidBecomeActive() {
+        guard shouldShowConfigurationAfterInterruption else { return }
+        shouldShowConfigurationAfterInterruption = false
+        if presentedViewController == nil {
+            presentConfigurationScreen(showCancelButton: true, doneTitle: "Resume")
+        }
+    }
+
+    private func presentConfigurationScreen(showCancelButton: Bool, doneTitle: String) {
+        guard presentedViewController == nil else { return }
+        mtkView.isPaused = true
+        inGameMenuButton.isHidden = true
+
         let configVC = ConfigurationViewController()
         configVC.renderer = renderer
+        configVC.showsCancelButton = showCancelButton
+        configVC.doneButtonTitle = doneTitle
+        configVC.initialCategory = lastConfigurationCategory
+        configVC.onCategoryChanged = { [weak self] category in
+            self?.lastConfigurationCategory = category
+        }
+        configVC.onDone = { [weak self] in
+            guard let self else { return }
+            self.mtkView.isPaused = false
+            self.inGameMenuButton.isHidden = false
+            self.updateGestureDebug("idle")
+        }
+        configVC.onCancel = { [weak self] in
+            guard let self else { return }
+            self.mtkView.isPaused = false
+            self.inGameMenuButton.isHidden = false
+            self.updateGestureDebug("idle")
+        }
+
         let navController = UINavigationController(rootViewController: configVC)
         navController.modalPresentationStyle = .fullScreen
         present(navController, animated: true)
-    }
-
-    private func particleCount(forSliderValue value: Float) -> Int {
-        let minLog = log10(Float(minParticleCount))
-        let maxLog = log10(Float(maxParticleCount))
-        let logValue = minLog + (maxLog - minLog) * value
-        let raw = Int(pow(10, logValue).rounded())
-        return min(max(raw, minParticleCount), maxParticleCount)
-    }
-
-    private func sliderValue(forParticleCount count: Int) -> Float {
-        let minLog = log10(Float(minParticleCount))
-        let maxLog = log10(Float(maxParticleCount))
-        let clamped = Float(min(max(count, minParticleCount), maxParticleCount))
-        return (log10(clamped) - minLog) / (maxLog - minLog)
     }
 
     private func styleMenuButton(_ button: UIButton, title: String, color: UIColor, compact: Bool = false) {
@@ -260,22 +264,6 @@ class GameViewController: UIViewController, UIGestureRecognizerDelegate {
                 ? UIEdgeInsets(top: 10, left: 14, bottom: 10, right: 14)
                 : UIEdgeInsets(top: 14, left: 20, bottom: 14, right: 20)
         }
-    }
-
-    private func setButtonTitle(_ button: UIButton, _ title: String) {
-        if #available(iOS 15.0, *) {
-            var config = button.configuration
-            config?.title = title
-            button.configuration = config
-        } else {
-            button.setTitle(title, for: .normal)
-        }
-    }
-
-    private func formattedCount(_ value: Int) -> String {
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .decimal
-        return formatter.string(from: NSNumber(value: value)) ?? "\(value)"
     }
 
 }

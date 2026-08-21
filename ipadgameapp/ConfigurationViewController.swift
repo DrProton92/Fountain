@@ -24,6 +24,12 @@ enum ConfigurationCategory: Int, CaseIterable {
 class ConfigurationViewController: UIViewController {
     
     var renderer: Renderer!
+    var doneButtonTitle: String = "OK"
+    var showsCancelButton: Bool = true
+    var initialCategory: ConfigurationCategory = .general
+    var onDone: (() -> Void)?
+    var onCancel: (() -> Void)?
+    var onCategoryChanged: ((ConfigurationCategory) -> Void)?
     private var selectedCategory: ConfigurationCategory = .general
     
     // UI Components
@@ -31,6 +37,9 @@ class ConfigurationViewController: UIViewController {
     private var categoryTableView: UITableView!
     private var detailContainerView: UIView!
     private var currentDetailViewController: UIViewController?
+    private var generalSettingsViewController: GeneralSettingsViewController!
+    private var particleColorSettingsViewController: ParticleColorSettingsViewController!
+    private var particleSizeSettingsViewController: ParticleSizeConfigViewController!
     
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -39,22 +48,34 @@ class ConfigurationViewController: UIViewController {
         
         // Setup navigation
         navigationItem.title = "Configuration"
-        navigationItem.leftBarButtonItem = UIBarButtonItem(
-            barButtonSystemItem: .cancel,
-            target: self,
-            action: #selector(cancelTapped)
-        )
+        if showsCancelButton {
+            navigationItem.leftBarButtonItem = UIBarButtonItem(
+                barButtonSystemItem: .cancel,
+                target: self,
+                action: #selector(cancelTapped)
+            )
+        } else {
+            navigationItem.leftBarButtonItem = nil
+        }
         navigationItem.rightBarButtonItem = UIBarButtonItem(
-            barButtonSystemItem: .done,
+            title: doneButtonTitle,
+            style: .prominent,
             target: self,
             action: #selector(doneTapped)
         )
+
+        generalSettingsViewController = GeneralSettingsViewController()
+        generalSettingsViewController.renderer = renderer
+        particleColorSettingsViewController = ParticleColorSettingsViewController()
+        particleColorSettingsViewController.renderer = renderer
+        particleSizeSettingsViewController = ParticleSizeConfigViewController()
+        particleSizeSettingsViewController.renderer = renderer
         
         // Setup split view
         setupSplitView()
         
-        // Select first category
-        selectCategory(.general)
+        // Select the category that was active when this screen was last shown.
+        selectCategory(initialCategory)
     }
     
     private func setupSplitView() {
@@ -112,6 +133,7 @@ class ConfigurationViewController: UIViewController {
     
     private func selectCategory(_ category: ConfigurationCategory) {
         selectedCategory = category
+        onCategoryChanged?(category)
         categoryTableView.reloadData()
         
         // Remove current detail view controller
@@ -123,17 +145,13 @@ class ConfigurationViewController: UIViewController {
         
         // Create and add new detail view controller
         let detailVC: UIViewController
-        
         switch category {
         case .general:
-            detailVC = GeneralSettingsViewController()
-            (detailVC as! GeneralSettingsViewController).renderer = renderer
+            detailVC = generalSettingsViewController
         case .particleColor:
-            detailVC = ParticleColorSettingsViewController()
-            (detailVC as! ParticleColorSettingsViewController).renderer = renderer
+            detailVC = particleColorSettingsViewController
         case .particleSize:
-            detailVC = ParticleSizeConfigViewController()
-            (detailVC as! ParticleSizeConfigViewController).renderer = renderer
+            detailVC = particleSizeSettingsViewController
         }
         
         addChild(detailVC)
@@ -152,20 +170,20 @@ class ConfigurationViewController: UIViewController {
     }
     
     @objc private func cancelTapped() {
-        dismiss(animated: true)
+        dismiss(animated: true) {
+            self.onCancel?()
+        }
     }
     
     @objc private func doneTapped() {
-        // Apply all settings from current controllers
-        if let generalVC = currentDetailViewController as? GeneralSettingsViewController {
-            generalVC.applyConfiguration()
-        } else if let colorVC = currentDetailViewController as? ParticleColorSettingsViewController {
-            colorVC.applyConfiguration()
-        } else if let sizeVC = currentDetailViewController as? ParticleSizeConfigViewController {
-            sizeVC.applyConfiguration()
+        // Apply all settings, not just the currently visible category.
+        generalSettingsViewController.applyConfiguration()
+        particleColorSettingsViewController.applyConfiguration()
+        particleSizeSettingsViewController.applyConfiguration()
+
+        dismiss(animated: true) {
+            self.onDone?()
         }
-        
-        dismiss(animated: true)
     }
 }
 
@@ -206,248 +224,5 @@ extension ConfigurationViewController: UITableViewDelegate, UITableViewDataSourc
     
     func tableView(_ tableView: UITableView, heightForRowAt indexPath: IndexPath) -> CGFloat {
         return 50
-    }
-}
-
-// MARK: - General Settings View Controller
-
-class GeneralSettingsViewController: UIViewController {
-    
-    var renderer: Renderer!
-    private var particleCount: Int = 10000
-    
-    private let minParticleCount = 100
-    
-    override func viewDidLoad() {
-        super.viewDidLoad()
-        
-        particleCount = renderer.activeParticleCount
-        view.backgroundColor = .systemBackground
-        
-        let scrollView = UIScrollView()
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(scrollView)
-        
-        let contentView = UIView()
-        contentView.translatesAutoresizingMaskIntoConstraints = false
-        scrollView.addSubview(contentView)
-        
-        // Particle Count Section
-        let countLabel = UILabel()
-        countLabel.translatesAutoresizingMaskIntoConstraints = false
-        countLabel.text = "Particle Count"
-        countLabel.font = .boldSystemFont(ofSize: 16)
-        contentView.addSubview(countLabel)
-        
-        let slider = UISlider()
-        slider.translatesAutoresizingMaskIntoConstraints = false
-        slider.minimumValue = 0
-        slider.maximumValue = 1
-        slider.value = sliderValue(forParticleCount: particleCount)
-        contentView.addSubview(slider)
-        
-        let countValueLabel = UILabel()
-        countValueLabel.translatesAutoresizingMaskIntoConstraints = false
-        countValueLabel.text = formattedCount(particleCount)
-        countValueLabel.font = .monospacedSystemFont(ofSize: 14, weight: .medium)
-        countValueLabel.textAlignment = .right
-        contentView.addSubview(countValueLabel)
-        
-        let countField = UITextField()
-        countField.translatesAutoresizingMaskIntoConstraints = false
-        countField.borderStyle = .roundedRect
-        countField.keyboardType = .numberPad
-        countField.textAlignment = .center
-        countField.text = "\(particleCount)"
-        countField.widthAnchor.constraint(equalToConstant: 120).isActive = true
-        contentView.addSubview(countField)
-        
-        slider.addAction(UIAction { _ in
-            let count = self.particleCount(forSliderValue: slider.value)
-            countValueLabel.text = self.formattedCount(count)
-            countField.text = "\(count)"
-            self.particleCount = count
-        }, for: .valueChanged)
-        
-        countField.addAction(UIAction { _ in
-            guard let text = countField.text, let entered = Int(text) else { return }
-            let clamped = min(max(entered, self.minParticleCount), maxParticleCount)
-            countField.text = "\(clamped)"
-            countValueLabel.text = self.formattedCount(clamped)
-            slider.value = self.sliderValue(forParticleCount: clamped)
-            self.particleCount = clamped
-        }, for: .editingDidEnd)
-        
-        // Layout
-        NSLayoutConstraint.activate([
-            scrollView.topAnchor.constraint(equalTo: view.topAnchor),
-            scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            
-            contentView.topAnchor.constraint(equalTo: scrollView.topAnchor),
-            contentView.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor),
-            contentView.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor),
-            contentView.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor),
-            contentView.widthAnchor.constraint(equalTo: scrollView.widthAnchor),
-            
-            countLabel.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 20),
-            countLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
-            
-            slider.topAnchor.constraint(equalTo: countLabel.bottomAnchor, constant: 12),
-            slider.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
-            slider.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
-            
-            countValueLabel.topAnchor.constraint(equalTo: slider.bottomAnchor, constant: 8),
-            countValueLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
-            countValueLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
-            
-            countField.topAnchor.constraint(equalTo: countValueLabel.bottomAnchor, constant: 12),
-            countField.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
-            countField.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -20)
-        ])
-    }
-    
-    func applyConfiguration() {
-        renderer.setParticleCount(particleCount)
-    }
-    
-    private func particleCount(forSliderValue value: Float) -> Int {
-        let minLog = log10(Float(minParticleCount))
-        let maxLog = log10(Float(maxParticleCount))
-        let logValue = minLog + (maxLog - minLog) * value
-        let raw = Int(pow(10, logValue).rounded())
-        return min(max(raw, minParticleCount), maxParticleCount)
-    }
-    
-    private func sliderValue(forParticleCount count: Int) -> Float {
-        let minLog = log10(Float(minParticleCount))
-        let maxLog = log10(Float(maxParticleCount))
-        let clamped = Float(min(max(count, minParticleCount), maxParticleCount))
-        return (log10(clamped) - minLog) / (maxLog - minLog)
-    }
-    
-    private func formattedCount(_ value: Int) -> String {
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .decimal
-        return formatter.string(from: NSNumber(value: value)) ?? "\(value)"
-    }
-}
-
-// MARK: - Particle Color Settings View Controller
-
-class ParticleColorSettingsViewController: UIViewController {
-    
-    var renderer: Renderer!
-    private var selectedColorStyle: ParticleColorStyle = .rainbow
-    
-    override func viewDidLoad() {
-        super.viewDidLoad()
-        
-        selectedColorStyle = renderer.particleColorStyle
-        view.backgroundColor = .systemBackground
-        
-        let scrollView = UIScrollView()
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(scrollView)
-        
-        let contentView = UIView()
-        contentView.translatesAutoresizingMaskIntoConstraints = false
-        scrollView.addSubview(contentView)
-        
-        // Color Style Label
-        let styleLabel = UILabel()
-        styleLabel.translatesAutoresizingMaskIntoConstraints = false
-        styleLabel.text = "Color Style"
-        styleLabel.font = .boldSystemFont(ofSize: 16)
-        contentView.addSubview(styleLabel)
-        
-        // Color Style Segmented Control
-        let colorStyleControl = UISegmentedControl(items: ParticleColorStyle.allCases.map(\.displayName))
-        colorStyleControl.translatesAutoresizingMaskIntoConstraints = false
-        colorStyleControl.selectedSegmentIndex = selectedColorStyle.rawValue
-        colorStyleControl.addTarget(self, action: #selector(colorStyleChanged(_:)), for: .valueChanged)
-        contentView.addSubview(colorStyleControl)
-        
-        // Color preview
-        let previewLabel = UILabel()
-        previewLabel.translatesAutoresizingMaskIntoConstraints = false
-        previewLabel.text = "Preview"
-        previewLabel.font = .systemFont(ofSize: 14, weight: .medium)
-        previewLabel.textColor = .secondaryLabel
-        contentView.addSubview(previewLabel)
-        
-        let previewView = UIView()
-        previewView.translatesAutoresizingMaskIntoConstraints = false
-        previewView.layer.cornerRadius = 8
-        previewView.backgroundColor = .systemGray5
-        contentView.addSubview(previewView)
-        
-        let colorCircles = UIStackView()
-        colorCircles.translatesAutoresizingMaskIntoConstraints = false
-        colorCircles.axis = .horizontal
-        colorCircles.spacing = 8
-        colorCircles.alignment = .center
-        colorCircles.distribution = .fillEqually
-        previewView.addSubview(colorCircles)
-        
-        // Add color preview circles
-        for _ in 0..<5 {
-            let circle = UIView()
-            circle.translatesAutoresizingMaskIntoConstraints = false
-            circle.layer.cornerRadius = 16
-            let r = CGFloat.random(in: 0...1)
-            let g = CGFloat.random(in: 0...1)
-            let b = CGFloat.random(in: 0...1)
-            circle.backgroundColor = UIColor(cgColor: CGColor(colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!,
-                                                               components: [r, g, b, 1.0])!)
-            circle.widthAnchor.constraint(equalToConstant: 32).isActive = true
-            circle.heightAnchor.constraint(equalToConstant: 32).isActive = true
-            colorCircles.addArrangedSubview(circle)
-        }
-        
-        NSLayoutConstraint.activate([
-            colorCircles.topAnchor.constraint(equalTo: previewView.topAnchor, constant: 16),
-            colorCircles.leadingAnchor.constraint(equalTo: previewView.leadingAnchor, constant: 16),
-            colorCircles.trailingAnchor.constraint(equalTo: previewView.trailingAnchor, constant: -16),
-            colorCircles.bottomAnchor.constraint(equalTo: previewView.bottomAnchor, constant: -16)
-        ])
-        
-        // Layout
-        NSLayoutConstraint.activate([
-            scrollView.topAnchor.constraint(equalTo: view.topAnchor),
-            scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            
-            contentView.topAnchor.constraint(equalTo: scrollView.topAnchor),
-            contentView.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor),
-            contentView.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor),
-            contentView.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor),
-            contentView.widthAnchor.constraint(equalTo: scrollView.widthAnchor),
-            
-            styleLabel.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 20),
-            styleLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
-            
-            colorStyleControl.topAnchor.constraint(equalTo: styleLabel.bottomAnchor, constant: 12),
-            colorStyleControl.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
-            colorStyleControl.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
-            
-            previewLabel.topAnchor.constraint(equalTo: colorStyleControl.bottomAnchor, constant: 24),
-            previewLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
-            
-            previewView.topAnchor.constraint(equalTo: previewLabel.bottomAnchor, constant: 8),
-            previewView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
-            previewView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
-            previewView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -20)
-        ])
-    }
-    
-    @objc private func colorStyleChanged(_ sender: UISegmentedControl) {
-        selectedColorStyle = ParticleColorStyle(rawValue: sender.selectedSegmentIndex) ?? .rainbow
-    }
-    
-    func applyConfiguration() {
-        renderer.setParticleColorStyle(selectedColorStyle)
     }
 }

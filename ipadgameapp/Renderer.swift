@@ -21,6 +21,7 @@ enum RendererError: Error {
 }
 
 enum ParticleColorStyle: Int, CaseIterable {
+    case singleColor
     case rainbow
     case fire
     case pastel
@@ -28,6 +29,7 @@ enum ParticleColorStyle: Int, CaseIterable {
 
     var displayName: String {
         switch self {
+        case .singleColor: return "Single Color"
         case .rainbow: return "Rainbow"
         case .fire: return "Fire"
         case .pastel: return "Pastel"
@@ -136,6 +138,150 @@ struct SizeDistributionPoint {
     var y: Float // 0.0 to 1.0 (probability/weight)
 }
 
+struct ColorSpectrumPoint {
+    var x: Float // 0.0 to 1.0
+    var y: Float // 0.0 to 1.0 (graph height)
+    var color: SIMD4<Float>
+}
+
+struct ColorSpectrum {
+    var controlPoints: [ColorSpectrumPoint] = []
+    var preset: ParticleColorStyle = .singleColor
+    var singleColor: SIMD4<Float> = SIMD4<Float>(0.95, 0.95, 0.95, 1.0)
+
+    init() {
+        applyPreset(.singleColor)
+    }
+
+    init(controlPoints: [ColorSpectrumPoint], preset: ParticleColorStyle) {
+        self.controlPoints = controlPoints
+        self.preset = preset
+        self.singleColor = controlPoints.first?.color ?? self.singleColor
+    }
+
+    mutating func applyPreset(_ preset: ParticleColorStyle) {
+        self.preset = preset
+        func points(from values: [(Float, Float, SIMD4<Float>)]) -> [ColorSpectrumPoint] {
+            let raw = values.map { ColorSpectrumPoint(x: $0.0, y: $0.1, color: $0.2) }
+            return ColorSpectrum.resample(points: raw, count: 10)
+        }
+
+        switch preset {
+        case .singleColor:
+            let color = singleColor
+            controlPoints = ColorSpectrum.resample(points: [
+                ColorSpectrumPoint(x: 0.0, y: 0.5, color: color),
+                ColorSpectrumPoint(x: 1.0, y: 0.5, color: color)
+            ], count: 10)
+        case .rainbow:
+            controlPoints = points(from: [
+                (0.0, 0.5, SIMD4<Float>(0.6, 0.0, 1.0, 1.0)),
+                (0.25, 0.7, SIMD4<Float>(0.1, 0.3, 1.0, 1.0)),
+                (0.5, 0.9, SIMD4<Float>(0.1, 1.0, 0.25, 1.0)),
+                (0.75, 0.7, SIMD4<Float>(1.0, 0.85, 0.1, 1.0)),
+                (1.0, 0.5, SIMD4<Float>(1.0, 0.1, 0.1, 1.0))
+            ])
+        case .fire:
+            controlPoints = points(from: [
+                (0.0, 0.1, SIMD4<Float>(0.12, 0.0, 0.0, 1.0)),
+                (0.3, 0.35, SIMD4<Float>(0.85, 0.05, 0.0, 1.0)),
+                (0.6, 0.75, SIMD4<Float>(1.0, 0.35, 0.0, 1.0)),
+                (1.0, 1.0, SIMD4<Float>(1.0, 0.95, 0.45, 1.0))
+            ])
+        case .pastel:
+            controlPoints = points(from: [
+                (0.0, 0.7, SIMD4<Float>(1.0, 0.75, 0.82, 1.0)),
+                (0.33, 0.78, SIMD4<Float>(0.78, 0.92, 1.0, 1.0)),
+                (0.66, 0.82, SIMD4<Float>(0.8, 1.0, 0.84, 1.0)),
+                (1.0, 0.74, SIMD4<Float>(1.0, 0.9, 0.72, 1.0))
+            ])
+        case .neon:
+            controlPoints = points(from: [
+                (0.0, 0.55, SIMD4<Float>(1.0, 0.05, 0.75, 1.0)),
+                (0.25, 0.8, SIMD4<Float>(0.2, 1.0, 0.95, 1.0)),
+                (0.5, 0.95, SIMD4<Float>(0.85, 1.0, 0.1, 1.0)),
+                (0.75, 0.82, SIMD4<Float>(0.15, 0.55, 1.0, 1.0)),
+                (1.0, 0.55, SIMD4<Float>(0.95, 0.1, 1.0, 1.0))
+            ])
+        }
+    }
+
+    static func resample(points: [ColorSpectrumPoint], count: Int) -> [ColorSpectrumPoint] {
+        guard count > 1, !points.isEmpty else { return points }
+        let sorted = points.sorted { $0.x < $1.x }
+        return (0..<count).map { i in
+            let x = Float(i) / Float(count - 1)
+            return ColorSpectrumPoint(x: x,
+                                      y: sampleValue(at: x, points: sorted, keyPath: \ColorSpectrumPoint.y),
+                                      color: sampleColor(at: x, points: sorted))
+        }
+    }
+
+    private static func sampleValue(at normalized: Float, points: [ColorSpectrumPoint], keyPath: KeyPath<ColorSpectrumPoint, Float>) -> Float {
+        let clamped = max(0, min(normalized, 1.0))
+        guard points.count > 1 else { return points.first?[keyPath: keyPath] ?? 0.5 }
+        var left = points[0]
+        var right = points[1]
+        for i in 0..<(points.count - 1) {
+            if points[i].x <= clamped && clamped <= points[i + 1].x {
+                left = points[i]
+                right = points[i + 1]
+                break
+            }
+        }
+        let range = right.x - left.x
+        if range < 0.0001 { return left[keyPath: keyPath] }
+        let t = (clamped - left.x) / range
+        return left[keyPath: keyPath] + (right[keyPath: keyPath] - left[keyPath: keyPath]) * t
+    }
+
+    private static func sampleColor(at normalized: Float, points: [ColorSpectrumPoint]) -> SIMD4<Float> {
+        let clamped = max(0, min(normalized, 1.0))
+        guard points.count > 1 else { return points.first?.color ?? SIMD4<Float>(1, 1, 1, 1) }
+        var left = points[0]
+        var right = points[1]
+        for i in 0..<(points.count - 1) {
+            if points[i].x <= clamped && clamped <= points[i + 1].x {
+                left = points[i]
+                right = points[i + 1]
+                break
+            }
+        }
+        let range = right.x - left.x
+        if range < 0.0001 { return left.color }
+        let t = (clamped - left.x) / range
+        return left.color + (right.color - left.color) * t
+    }
+
+    func sampleColor(at normalized: Float) -> SIMD4<Float> {
+        if preset == .singleColor {
+            return singleColor
+        }
+        guard !controlPoints.isEmpty else { return singleColor }
+        guard controlPoints.count > 1 else { return controlPoints[0].color }
+
+        let clamped = max(0, min(normalized, 1.0))
+        var left = controlPoints[0]
+        var right = controlPoints[1]
+
+        for i in 0..<(controlPoints.count - 1) {
+            if controlPoints[i].x <= clamped && clamped <= controlPoints[i + 1].x {
+                left = controlPoints[i]
+                right = controlPoints[i + 1]
+                break
+            }
+        }
+
+        let range = right.x - left.x
+        if range < 0.0001 {
+            return left.color
+        }
+
+        let t = (clamped - left.x) / range
+        return left.color + (right.color - left.color) * t
+    }
+}
+
 class Renderer: NSObject, MTKViewDelegate {
     
     public let device: MTLDevice
@@ -155,6 +301,7 @@ class Renderer: NSObject, MTKViewDelegate {
     private(set) var maxRenderableParticleCount = defaultParticleCount
     private(set) var activeParticleCount = defaultParticleCount
     private(set) var particleColorStyle: ParticleColorStyle = .rainbow
+    private(set) var colorSpectrum: ColorSpectrum = ColorSpectrum()
     
     // Particle size configuration
     private(set) var particleSizeMode: ParticleSizeMode = .constant
@@ -187,6 +334,7 @@ class Renderer: NSObject, MTKViewDelegate {
         let preferredCapByBudget = preferredParticleBufferBudgetBytes / particleStride
         var capacity = min(maxParticleCount, deviceCapByLength, preferredCapByBudget)
         capacity = max(capacity, defaultParticleCount)
+        let initialSpectrum = ColorSpectrum()
 
         var allocatedBuffer: MTLBuffer?
         var allocatedCapacity = capacity
@@ -211,7 +359,7 @@ class Renderer: NSObject, MTKViewDelegate {
             let upward = Float.random(in: 0.03...0.05)
             particlesPtr[i].position = SIMD3<Float>(0, 0, 0)
             particlesPtr[i].velocity = SIMD3<Float>(cos(angle) * radial, upward, sin(angle) * radial)
-            particlesPtr[i].color = Renderer.color(for: particleColorStyle)
+            particlesPtr[i].color = Renderer.spectrumColor(for: i, count: maxRenderableParticleCount, spectrum: initialSpectrum)
             particlesPtr[i].life = Float.random(in: 0.1...1.0)
             particlesPtr[i].size = constantParticleSize
         }
@@ -328,14 +476,30 @@ class Renderer: NSObject, MTKViewDelegate {
     func setParticleCount(_ count: Int) {
         let clamped = min(max(count, 1), maxRenderableParticleCount)
          activeParticleCount = clamped
+         applyColorStyle(in: 0..<activeParticleCount)
          regenerateParticleSizes()  // Assign sizes to new particles
      }
 
     func setParticleColorStyle(_ style: ParticleColorStyle) {
         guard style != particleColorStyle else { return }
-         particleColorStyle = style
-         applyColorStyle(in: 0..<activeParticleCount)
+        particleColorStyle = style
+        colorSpectrum.applyPreset(style)
+        applyColorStyle(in: 0..<activeParticleCount)
      }
+
+    func setColorSpectrum(_ spectrum: ColorSpectrum) {
+        colorSpectrum = spectrum
+        particleColorStyle = spectrum.preset
+        applyColorStyle(in: 0..<activeParticleCount)
+    }
+
+    func setSingleColor(_ color: SIMD4<Float>) {
+        colorSpectrum.singleColor = color
+        if particleColorStyle == .singleColor {
+            colorSpectrum.applyPreset(.singleColor)
+            applyColorStyle(in: 0..<activeParticleCount)
+        }
+    }
 
     func setParticleSizeMode(_ mode: ParticleSizeMode) {
         particleSizeMode = mode
@@ -409,40 +573,23 @@ class Renderer: NSObject, MTKViewDelegate {
         guard lowerBound < upperBound else { return }
 
         let particlesPtr = particleBuffer.contents().bindMemory(to: Particle.self, capacity: maxRenderableParticleCount)
+        if particleColorStyle == .singleColor {
+            let uniformColor = colorSpectrum.singleColor
+            for i in lowerBound..<upperBound {
+                particlesPtr[i].color = uniformColor
+            }
+            return
+        }
+
         for i in lowerBound..<upperBound {
-            particlesPtr[i].color = Renderer.color(for: particleColorStyle)
+            particlesPtr[i].color = Renderer.spectrumColor(for: i, count: maxRenderableParticleCount, spectrum: colorSpectrum)
         }
     }
 
-    private static func color(for style: ParticleColorStyle) -> SIMD4<Float> {
-        switch style {
-        case .rainbow:
-            return SIMD4<Float>(
-                Float.random(in: 0.15...1.0),
-                Float.random(in: 0.15...1.0),
-                Float.random(in: 0.15...1.0),
-                1.0
-            )
-        case .fire:
-            return SIMD4<Float>(
-                Float.random(in: 0.85...1.0),
-                Float.random(in: 0.2...0.6),
-                Float.random(in: 0.0...0.2),
-                1.0
-            )
-        case .pastel:
-            return SIMD4<Float>(
-                Float.random(in: 0.65...1.0),
-                Float.random(in: 0.65...1.0),
-                Float.random(in: 0.65...1.0),
-                1.0
-            )
-        case .neon:
-            let channel = Int.random(in: 0...2)
-            var rgb = SIMD3<Float>(repeating: Float.random(in: 0.05...0.2))
-            rgb[channel] = Float.random(in: 0.9...1.0)
-            return SIMD4<Float>(rgb.x, rgb.y, rgb.z, 1.0)
-        }
+    private static func spectrumColor(for index: Int, count: Int, spectrum: ColorSpectrum) -> SIMD4<Float> {
+        guard count > 1 else { return spectrum.sampleColor(at: 0.5) }
+        let normalized = Float(index) / Float(count - 1)
+        return spectrum.sampleColor(at: normalized)
     }
 
     @MainActor

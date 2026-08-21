@@ -207,19 +207,20 @@ class ParticleSizeConfigViewController: UIViewController {
     private var distribution: SizeDistribution = SizeDistribution()
     
     private var sizeModeControl: UISegmentedControl!
+    private var constantModeContainer: UIStackView!
     private var constantSizeSlider: UISlider!
-    private var constantSizeLabel: UILabel!
-    private var distributionEditor: DistributionEditorView!
+    private var constantSizeField: UITextField!
+    private var randomModeContainer: UIStackView!
     private var minSizeSlider: UISlider!
     private var maxSizeSlider: UISlider!
     private var minSizeLabel: UILabel!
     private var maxSizeLabel: UILabel!
+    private var distributionEditor: DistributionEditorView!
     private var presetStackView: UIStackView!
     
     override func viewDidLoad() {
         super.viewDidLoad()
         
-        // Load current renderer settings
         sizeMode = renderer.particleSizeMode
         constantSize = renderer.constantParticleSize
         minSize = renderer.minSizeRange
@@ -235,114 +236,103 @@ class ParticleSizeConfigViewController: UIViewController {
         let contentView = UIView()
         contentView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.addSubview(contentView)
+
+        let mainStack = UIStackView()
+        mainStack.translatesAutoresizingMaskIntoConstraints = false
+        mainStack.axis = .vertical
+        mainStack.spacing = 18
+        contentView.addSubview(mainStack)
         
-        // Size Mode Selection
         let sizeModeLabel = UILabel()
         sizeModeLabel.translatesAutoresizingMaskIntoConstraints = false
         sizeModeLabel.text = "Size Mode"
         sizeModeLabel.font = .boldSystemFont(ofSize: 16)
-        contentView.addSubview(sizeModeLabel)
+        mainStack.addArrangedSubview(sizeModeLabel)
         
         sizeModeControl = UISegmentedControl(items: ParticleSizeMode.allCases.map(\.displayName))
         sizeModeControl.translatesAutoresizingMaskIntoConstraints = false
         sizeModeControl.selectedSegmentIndex = sizeMode.rawValue
         sizeModeControl.addTarget(self, action: #selector(sizeModeChanged), for: .valueChanged)
-        contentView.addSubview(sizeModeControl)
+        mainStack.addArrangedSubview(sizeModeControl)
         
-        // Constant Size Section
+        constantModeContainer = UIStackView()
+        constantModeContainer.axis = .vertical
+        constantModeContainer.spacing = 8
+        mainStack.addArrangedSubview(constantModeContainer)
+
         let constantSectionLabel = UILabel()
         constantSectionLabel.translatesAutoresizingMaskIntoConstraints = false
         constantSectionLabel.text = "Constant Size"
         constantSectionLabel.font = .boldSystemFont(ofSize: 14)
-        contentView.addSubview(constantSectionLabel)
-        
+        constantModeContainer.addArrangedSubview(constantSectionLabel)
+
+        let constantRow = UIStackView()
+        constantRow.axis = .horizontal
+        constantRow.spacing = 12
+        constantRow.alignment = .center
+        constantRow.translatesAutoresizingMaskIntoConstraints = false
+        constantModeContainer.addArrangedSubview(constantRow)
+
         constantSizeSlider = UISlider()
         constantSizeSlider.translatesAutoresizingMaskIntoConstraints = false
         constantSizeSlider.minimumValue = 0.5
         constantSizeSlider.maximumValue = 50
         constantSizeSlider.value = constantSize
         constantSizeSlider.addTarget(self, action: #selector(constantSizeChanged), for: .valueChanged)
-        contentView.addSubview(constantSizeSlider)
+        constantRow.addArrangedSubview(constantSizeSlider)
+
+        constantSizeField = UITextField()
+        constantSizeField.translatesAutoresizingMaskIntoConstraints = false
+        constantSizeField.borderStyle = .roundedRect
+        constantSizeField.keyboardType = .decimalPad
+        constantSizeField.textAlignment = .center
+        constantSizeField.text = String(format: "%.1f", constantSize)
+        constantSizeField.widthAnchor.constraint(equalToConstant: 96).isActive = true
+        constantSizeField.addAction(UIAction { [weak self] _ in
+            self?.constantSizeEdited()
+        }, for: .editingDidEnd)
+        constantRow.addArrangedSubview(constantSizeField)
         
-        constantSizeLabel = UILabel()
-        constantSizeLabel.translatesAutoresizingMaskIntoConstraints = false
-        constantSizeLabel.text = String(format: "%.1f px", constantSize)
-        constantSizeLabel.font = .systemFont(ofSize: 12)
-        constantSizeLabel.textAlignment = .center
-        contentView.addSubview(constantSizeLabel)
-        
-        // Random Distribution Section
+        randomModeContainer = UIStackView()
+        randomModeContainer.axis = .vertical
+        randomModeContainer.spacing = 10
+        mainStack.addArrangedSubview(randomModeContainer)
+
         let distributionSectionLabel = UILabel()
         distributionSectionLabel.translatesAutoresizingMaskIntoConstraints = false
         distributionSectionLabel.text = "Size Range & Distribution"
         distributionSectionLabel.font = .boldSystemFont(ofSize: 14)
-        contentView.addSubview(distributionSectionLabel)
-        
-        let minSizeInnerLabel = UILabel()
-        minSizeInnerLabel.translatesAutoresizingMaskIntoConstraints = false
-        minSizeInnerLabel.text = "Min Size"
-        minSizeInnerLabel.font = .systemFont(ofSize: 12)
-        contentView.addSubview(minSizeInnerLabel)
-        
-        minSizeSlider = UISlider()
-        minSizeSlider.translatesAutoresizingMaskIntoConstraints = false
-        minSizeSlider.minimumValue = 0.5
-        minSizeSlider.maximumValue = 25
-        minSizeSlider.value = minSize
-        minSizeSlider.addTarget(self, action: #selector(minSizeChanged), for: .valueChanged)
-        contentView.addSubview(minSizeSlider)
-        
-        minSizeLabel = UILabel()
-        minSizeLabel.translatesAutoresizingMaskIntoConstraints = false
-        minSizeLabel.text = String(format: "%.1f", minSize)
-        minSizeLabel.font = .systemFont(ofSize: 12)
-        minSizeLabel.textAlignment = .center
-        minSizeLabel.widthAnchor.constraint(equalToConstant: 40).isActive = true
-        contentView.addSubview(minSizeLabel)
-        
-        let maxSizeInnerLabel = UILabel()
-        maxSizeInnerLabel.translatesAutoresizingMaskIntoConstraints = false
-        maxSizeInnerLabel.text = "Max Size"
-        maxSizeInnerLabel.font = .systemFont(ofSize: 12)
-        contentView.addSubview(maxSizeInnerLabel)
-        
-        maxSizeSlider = UISlider()
-        maxSizeSlider.translatesAutoresizingMaskIntoConstraints = false
-        maxSizeSlider.minimumValue = 0.5
-        maxSizeSlider.maximumValue = 50
-        maxSizeSlider.value = maxSize
-        maxSizeSlider.addTarget(self, action: #selector(maxSizeChanged), for: .valueChanged)
-        contentView.addSubview(maxSizeSlider)
-        
-        maxSizeLabel = UILabel()
-        maxSizeLabel.translatesAutoresizingMaskIntoConstraints = false
-        maxSizeLabel.text = String(format: "%.1f", maxSize)
-        maxSizeLabel.font = .systemFont(ofSize: 12)
-        maxSizeLabel.textAlignment = .center
-        maxSizeLabel.widthAnchor.constraint(equalToConstant: 40).isActive = true
-        contentView.addSubview(maxSizeLabel)
-        
-        // Distribution Editor
+        randomModeContainer.addArrangedSubview(distributionSectionLabel)
+
+        let minRow = makeSliderValueRow(title: "Min Size", value: minSize, min: 0.5, max: 25, action: #selector(minSizeChanged))
+        minSizeSlider = minRow.slider
+        minSizeLabel = minRow.valueLabel
+        randomModeContainer.addArrangedSubview(minRow.container)
+
+        let maxRow = makeSliderValueRow(title: "Max Size", value: maxSize, min: 0.5, max: 50, action: #selector(maxSizeChanged))
+        maxSizeSlider = maxRow.slider
+        maxSizeLabel = maxRow.valueLabel
+        randomModeContainer.addArrangedSubview(maxRow.container)
+
         distributionEditor = DistributionEditorView(distribution: distribution)
         distributionEditor.translatesAutoresizingMaskIntoConstraints = false
         distributionEditor.heightAnchor.constraint(equalToConstant: 150).isActive = true
         distributionEditor.onDistributionChanged = { [weak self] newDist in
             self?.distribution = newDist
         }
-        contentView.addSubview(distributionEditor)
-        
-        // Preset Buttons
+        randomModeContainer.addArrangedSubview(distributionEditor)
+
         let presetLabel = UILabel()
         presetLabel.translatesAutoresizingMaskIntoConstraints = false
         presetLabel.text = "Presets"
         presetLabel.font = .boldSystemFont(ofSize: 14)
-        contentView.addSubview(presetLabel)
-        
+        randomModeContainer.addArrangedSubview(presetLabel)
+
         presetStackView = UIStackView()
         presetStackView.translatesAutoresizingMaskIntoConstraints = false
         presetStackView.axis = .vertical
         presetStackView.spacing = 8
-        contentView.addSubview(presetStackView)
+        randomModeContainer.addArrangedSubview(presetStackView)
         
         for preset in SizeDistributionPreset.allCases {
             let button = UIButton(type: .system)
@@ -352,77 +342,27 @@ class ParticleSizeConfigViewController: UIViewController {
             button.titleLabel?.font = .systemFont(ofSize: 14)
             presetStackView.addArrangedSubview(button)
         }
-        
-        // Layout constraints
+
         NSLayoutConstraint.activate([
             scrollView.topAnchor.constraint(equalTo: view.topAnchor),
             scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            
+
             contentView.topAnchor.constraint(equalTo: scrollView.topAnchor),
             contentView.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor),
             contentView.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor),
             contentView.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor),
             contentView.widthAnchor.constraint(equalTo: scrollView.widthAnchor),
-            
-            // Size Mode
-            sizeModeLabel.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 16),
-            sizeModeLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
-            
-            sizeModeControl.topAnchor.constraint(equalTo: sizeModeLabel.bottomAnchor, constant: 8),
-            sizeModeControl.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
-            sizeModeControl.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
-            
-            // Constant Size Section
-            constantSectionLabel.topAnchor.constraint(equalTo: sizeModeControl.bottomAnchor, constant: 20),
-            constantSectionLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
-            
-            constantSizeSlider.topAnchor.constraint(equalTo: constantSectionLabel.bottomAnchor, constant: 8),
-            constantSizeSlider.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
-            constantSizeSlider.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
-            
-            constantSizeLabel.topAnchor.constraint(equalTo: constantSizeSlider.bottomAnchor, constant: 4),
-            constantSizeLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
-            constantSizeLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
-            
-            // Distribution Section
-            distributionSectionLabel.topAnchor.constraint(equalTo: constantSizeLabel.bottomAnchor, constant: 20),
-            distributionSectionLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
-            
-            minSizeInnerLabel.topAnchor.constraint(equalTo: distributionSectionLabel.bottomAnchor, constant: 12),
-            minSizeInnerLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
-            
-            minSizeSlider.topAnchor.constraint(equalTo: minSizeInnerLabel.bottomAnchor, constant: 4),
-            minSizeSlider.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
-            minSizeSlider.trailingAnchor.constraint(equalTo: minSizeLabel.leadingAnchor, constant: -8),
-            
-            minSizeLabel.centerYAnchor.constraint(equalTo: minSizeSlider.centerYAnchor),
-            minSizeLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
-            
-            maxSizeInnerLabel.topAnchor.constraint(equalTo: minSizeSlider.bottomAnchor, constant: 12),
-            maxSizeInnerLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
-            
-            maxSizeSlider.topAnchor.constraint(equalTo: maxSizeInnerLabel.bottomAnchor, constant: 4),
-            maxSizeSlider.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
-            maxSizeSlider.trailingAnchor.constraint(equalTo: maxSizeLabel.leadingAnchor, constant: -8),
-            
-            maxSizeLabel.centerYAnchor.constraint(equalTo: maxSizeSlider.centerYAnchor),
-            maxSizeLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
-            
-            distributionEditor.topAnchor.constraint(equalTo: maxSizeSlider.bottomAnchor, constant: 16),
-            distributionEditor.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
-            distributionEditor.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
-            
-            presetLabel.topAnchor.constraint(equalTo: distributionEditor.bottomAnchor, constant: 16),
-            presetLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
-            
-            presetStackView.topAnchor.constraint(equalTo: presetLabel.bottomAnchor, constant: 8),
-            presetStackView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
-            presetStackView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
-            presetStackView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -16)
+
+            mainStack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 16),
+            mainStack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+            mainStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
+            mainStack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -16),
+
+            constantSizeSlider.heightAnchor.constraint(equalToConstant: 31)
         ])
-        
+
         updateUI()
     }
     
@@ -433,7 +373,17 @@ class ParticleSizeConfigViewController: UIViewController {
     
     @objc private func constantSizeChanged() {
         constantSize = constantSizeSlider.value
-        constantSizeLabel.text = String(format: "%.1f px", constantSize)
+        constantSizeField.text = String(format: "%.1f", constantSize)
+    }
+
+    private func constantSizeEdited() {
+        guard let text = constantSizeField.text, let value = Float(text) else {
+            constantSizeField.text = String(format: "%.1f", constantSize)
+            return
+        }
+        constantSize = min(max(value, 0.5), 50)
+        constantSizeSlider.value = constantSize
+        constantSizeField.text = String(format: "%.1f", constantSize)
     }
     
     @objc private func minSizeChanged() {
@@ -463,22 +413,70 @@ class ParticleSizeConfigViewController: UIViewController {
     }
     
     private func updateUI() {
-        constantSizeSlider.isEnabled = (sizeMode == .constant)
-        minSizeSlider.isEnabled = (sizeMode == .random)
-        maxSizeSlider.isEnabled = (sizeMode == .random)
-        distributionEditor.isUserInteractionEnabled = (sizeMode == .random)
-        
-        presetStackView.arrangedSubviews.forEach { view in
-            if let button = view as? UIButton {
-                button.isEnabled = (sizeMode == .random)
-            }
+        constantModeContainer.isHidden = sizeMode != .constant
+        randomModeContainer.isHidden = sizeMode != .random
+        if sizeMode == .constant {
+            constantSizeSlider.value = constantSize
+            constantSizeField.text = String(format: "%.1f", constantSize)
+        } else {
+            minSizeSlider.value = minSize
+            maxSizeSlider.value = maxSize
+            minSizeLabel.text = String(format: "%.1f", minSize)
+            maxSizeLabel.text = String(format: "%.1f", maxSize)
         }
     }
     
     func applyConfiguration() {
         renderer.setParticleSizeMode(sizeMode)
-        renderer.setConstantParticleSize(constantSize)
-        renderer.setSizeRange(minSize, maxSize)
-        renderer.setSizeDistribution(distribution)
+        switch sizeMode {
+        case .constant:
+            renderer.setConstantParticleSize(constantSize)
+        case .random:
+            renderer.setSizeRange(minSize, maxSize)
+            renderer.setSizeDistribution(distribution)
+        }
+    }
+
+    private struct SliderValueRow {
+        let container: UIStackView
+        let slider: UISlider
+        let valueLabel: UILabel
+    }
+
+    private func makeSliderValueRow(title: String, value: Float, min: Float, max: Float, action: Selector) -> SliderValueRow {
+        let container = UIStackView()
+        container.axis = .vertical
+        container.spacing = 4
+
+        let label = UILabel()
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.text = title
+        label.font = .systemFont(ofSize: 12)
+        container.addArrangedSubview(label)
+
+        let row = UIStackView()
+        row.axis = .horizontal
+        row.spacing = 12
+        row.alignment = .center
+        row.translatesAutoresizingMaskIntoConstraints = false
+        container.addArrangedSubview(row)
+
+        let newSlider = UISlider()
+        newSlider.translatesAutoresizingMaskIntoConstraints = false
+        newSlider.minimumValue = min
+        newSlider.maximumValue = max
+        newSlider.value = value
+        newSlider.addTarget(self, action: action, for: .valueChanged)
+        row.addArrangedSubview(newSlider)
+
+        let newValueLabel = UILabel()
+        newValueLabel.translatesAutoresizingMaskIntoConstraints = false
+        newValueLabel.text = String(format: "%.1f", value)
+        newValueLabel.font = .systemFont(ofSize: 12)
+        newValueLabel.textAlignment = .center
+        newValueLabel.widthAnchor.constraint(equalToConstant: 40).isActive = true
+        row.addArrangedSubview(newValueLabel)
+
+        return SliderValueRow(container: container, slider: newSlider, valueLabel: newValueLabel)
     }
 }
