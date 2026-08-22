@@ -249,7 +249,7 @@ class ParticleSizeConfigViewController: UIViewController {
     private var sizeMode: ParticleSizeMode = .constant
     private var constantSize: Float = 5.0
     private var minSize: Float = 1.0
-    private var maxSize: Float = 10.0
+    private var maxSize: Float = 30.0
     private var distribution: SizeDistribution = SizeDistribution()
     
     private var sizeModeControl: UISegmentedControl!
@@ -315,7 +315,7 @@ class ParticleSizeConfigViewController: UIViewController {
 
         let constantLabel = UILabel()
         constantLabel.translatesAutoresizingMaskIntoConstraints = false
-        constantLabel.text = "Constant Size"
+        constantLabel.text = "Single Size"
         constantLabel.font = .systemFont(ofSize: 13, weight: .medium)
         constantLabel.widthAnchor.constraint(equalToConstant: 96).isActive = true
         constantRow.addArrangedSubview(constantLabel)
@@ -323,7 +323,7 @@ class ParticleSizeConfigViewController: UIViewController {
         constantSizeSlider = UISlider()
         constantSizeSlider.translatesAutoresizingMaskIntoConstraints = false
         constantSizeSlider.minimumValue = 0.5
-        constantSizeSlider.maximumValue = 50
+        constantSizeSlider.maximumValue = 30
         constantSizeSlider.value = constantSize
         constantSizeSlider.addTarget(self, action: #selector(constantSizeChanged), for: .valueChanged)
         constantRow.addArrangedSubview(constantSizeSlider)
@@ -356,7 +356,7 @@ class ParticleSizeConfigViewController: UIViewController {
         minSizeField = minRow.valueField
         randomModeContainer.addArrangedSubview(minRow.container)
 
-        let maxRow = makeSliderValueRow(title: "Max Size", value: maxSize, min: 0.5, max: 50, action: #selector(maxSizeChanged))
+        let maxRow = makeSliderValueRow(title: "Max Size", value: maxSize, min: 0.5, max: 30, action: #selector(maxSizeChanged))
         maxSizeSlider = maxRow.slider
         maxSizeField = maxRow.valueField
         randomModeContainer.addArrangedSubview(maxRow.container)
@@ -396,14 +396,18 @@ class ParticleSizeConfigViewController: UIViewController {
         presetButtonRow.spacing = 8
         presetButtonRow.distribution = .fillEqually
         presetRow.addArrangedSubview(presetButtonRow)
-        
-        for preset in SizeDistributionPreset.allCases {
+
+        let orderedPresets: [SizeDistributionPreset] = [.flat, .skewedLeft, .gaussian, .skewedRight]
+        for preset in orderedPresets {
             let button = UIButton(type: .system)
             button.setTitle(preset.displayName, for: .normal)
-            button.titleLabel?.font = .systemFont(ofSize: 14, weight: .semibold)
-            button.backgroundColor = .secondarySystemBackground
-            button.layer.cornerRadius = 8
-            button.clipsToBounds = true
+            var config = UIButton.Configuration.filled()
+            config.baseBackgroundColor = .secondarySystemBackground
+            config.baseForegroundColor = .label
+            config.cornerStyle = .medium
+            config.titleAlignment = .center
+            config.contentInsets = NSDirectionalEdgeInsets(top: 8, leading: 8, bottom: 8, trailing: 8)
+            button.configuration = config
             button.addTarget(self, action: #selector(presetTapped(_:)), for: .touchUpInside)
             button.tag = preset.rawValue
             presetButtonRow.addArrangedSubview(button)
@@ -447,7 +451,7 @@ class ParticleSizeConfigViewController: UIViewController {
             constantSizeField.text = String(format: "%.1f", constantSize)
             return
         }
-        constantSize = min(max(value, 0.5), 50)
+        constantSize = min(max(value, 0.5), 30)
         constantSizeSlider.value = constantSize
         constantSizeField.text = String(format: "%.1f", constantSize)
     }
@@ -492,7 +496,7 @@ class ParticleSizeConfigViewController: UIViewController {
             maxSizeField.text = String(format: "%.1f", maxSize)
             return
         }
-        maxSize = min(max(value, 0.5), 50.0)
+        maxSize = min(max(value, 0.5), 30.0)
         if maxSize < minSize {
             minSize = maxSize
             minSizeSlider.value = minSize
@@ -523,6 +527,7 @@ class ParticleSizeConfigViewController: UIViewController {
     }
     
     func applyConfiguration() {
+        guard isViewLoaded else { return }
         renderer.setParticleSizeMode(sizeMode)
         switch sizeMode {
         case .constant:

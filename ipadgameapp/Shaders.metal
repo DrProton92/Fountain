@@ -21,7 +21,7 @@ constant uint kMaxParticleCount = 100000000;
 // Updates particle physics on the GPU
 kernel void particle_compute(device Particle* particles [[buffer(BufferIndexParticles)]],
                              constant Uniforms& uniforms [[buffer(BufferIndexUniforms)]],
-                             uint id [[thread_position_in_grid]]) 
+                             uint id [[thread_position_in_grid]])
 {
     if (id >= kMaxParticleCount || id >= uniforms.particleCount) {
         return;
@@ -32,7 +32,7 @@ kernel void particle_compute(device Particle* particles [[buffer(BufferIndexPart
     particles[id].position += particles[id].velocity;
     
     // Age the particle
-    particles[id].life -= 0.005; 
+    particles[id].life -= 0.005;
 
      // If particle "dies", reset it to the center with a new velocity
      if (particles[id].life <= 0.0) {
@@ -57,7 +57,7 @@ struct ParticleVertexOutput {
 
 vertex ParticleVertexOutput particle_vertex(uint vid [[vertex_id]],
                                            const device Particle* particles [[buffer(BufferIndexParticles)]],
-                                           constant Uniforms& uniforms [[buffer(BufferIndexUniforms)]]) 
+                                           constant Uniforms& uniforms [[buffer(BufferIndexUniforms)]])
 {
     Particle p = particles[vid];
     ParticleVertexOutput out;
@@ -70,6 +70,16 @@ vertex ParticleVertexOutput particle_vertex(uint vid [[vertex_id]],
     return out;
 }
 
-fragment float4 fragmentShader(ParticleVertexOutput in [[stage_in]]) {
-    return in.color;
+fragment float4 fragmentShader(ParticleVertexOutput in [[stage_in]],
+                               float2 pointCoord [[point_coord]]) {
+    float2 centered = pointCoord - float2(0.5, 0.5);
+    float distanceFromCenter = length(centered);
+
+    // Keep only fragments inside a circular footprint and soften the edge slightly.
+    if (distanceFromCenter > 0.5) {
+        discard_fragment();
+    }
+
+    float edgeAlpha = smoothstep(0.5, 0.45, distanceFromCenter);
+    return float4(in.color.rgb, in.color.a * edgeAlpha);
 }

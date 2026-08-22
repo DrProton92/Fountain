@@ -48,7 +48,7 @@ enum ParticleSizeMode: Int, CaseIterable {
 
     var displayName: String {
         switch self {
-        case .constant: return "Constant"
+        case .constant: return "Single Value"
         case .random: return "Spectrum"
         }
     }
@@ -58,12 +58,14 @@ enum SizeDistributionPreset: Int, CaseIterable {
     case gaussian
     case skewedLeft
     case skewedRight
+    case flat
 
     var displayName: String {
         switch self {
-        case .gaussian: return "Gaussian (Center)"
+        case .gaussian: return "Gaussian"
         case .skewedLeft: return "Skewed Left"
         case .skewedRight: return "Skewed Right"
+        case .flat: return "Flat"
         }
     }
 }
@@ -90,9 +92,13 @@ struct SizeDistribution {
         case .gaussian:
             self.controlPoints = points(from: [
                 (0.0, 0.0),
-                (0.25, 0.5),
-                (0.5, 1.0),
-                (0.75, 0.5),
+                (0.12, 0.06),
+                (0.25, 0.28),
+                (0.40, 0.78),
+                (0.50, 1.0),
+                (0.60, 0.78),
+                (0.75, 0.28),
+                (0.88, 0.06),
                 (1.0, 0.0)
             ])
         case .skewedLeft:
@@ -107,6 +113,11 @@ struct SizeDistribution {
                 (0.0, 0.0),
                 (0.3, 0.3),
                 (0.7, 0.8),
+                (1.0, 1.0)
+            ])
+        case .flat:
+            self.controlPoints = points(from: [
+                (0.0, 1.0),
                 (1.0, 1.0)
             ])
         }
@@ -387,7 +398,7 @@ class Renderer: NSObject, MTKViewDelegate {
     private(set) var constantParticleSize: Float = 5.0
     private(set) var sizeDistribution: SizeDistribution = SizeDistribution()
     private(set) var minSizeRange: Float = 1.0
-    private(set) var maxSizeRange: Float = 10.0
+    private(set) var maxSizeRange: Float = 30.0
     
     var projectionMatrix: matrix_float4x4 = matrix_float4x4()
     var cameraYaw: Float = 0
@@ -588,7 +599,7 @@ class Renderer: NSObject, MTKViewDelegate {
     }
 
     func setConstantParticleSize(_ size: Float) {
-        let clamped = max(0.5, min(size, 50.0))
+        let clamped = max(0.5, min(size, 30.0))
         constantParticleSize = clamped
         if particleSizeMode == .constant {
             regenerateParticleSizes()

@@ -371,6 +371,13 @@ final class ParticleColorSettingsViewController: UIViewController {
     private var selectedSingleColor: UIColor = .white
     private var wheelBottomConstraint: NSLayoutConstraint?
     private var spectrumBottomConstraint: NSLayoutConstraint?
+    private var presetButtonContainer: UIStackView!
+    private var presetButtons: [UIButton] = []
+    private enum PresetButtonLayoutMode {
+        case singleRow
+        case wrappedRows
+    }
+    private var currentPresetButtonLayoutMode: PresetButtonLayoutMode?
     
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -448,36 +455,40 @@ final class ParticleColorSettingsViewController: UIViewController {
         }
         spectrumContainer.addArrangedSubview(spectrumEditor)
 
-        let presetRow = UIStackView()
-        presetRow.axis = .horizontal
-        presetRow.spacing = 10
-        presetRow.alignment = .center
-        spectrumContainer.addArrangedSubview(presetRow)
+        let presetSection = UIStackView()
+        presetSection.axis = .vertical
+        presetSection.spacing = 8
+        spectrumContainer.addArrangedSubview(presetSection)
 
         let presetLabel = UILabel()
         presetLabel.text = "Reset Spectrum to Preset:"
         presetLabel.font = .systemFont(ofSize: 14, weight: .medium)
         presetLabel.textColor = .secondaryLabel
-        presetLabel.setContentHuggingPriority(.required, for: .horizontal)
-        presetLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
-        presetRow.addArrangedSubview(presetLabel)
+        presetLabel.numberOfLines = 0
+        presetSection.addArrangedSubview(presetLabel)
 
-        let presetButtonRow = UIStackView()
-        presetButtonRow.axis = .horizontal
-        presetButtonRow.spacing = 8
-        presetButtonRow.distribution = .fillEqually
-        presetRow.addArrangedSubview(presetButtonRow)
+        presetButtonContainer = UIStackView()
+        presetButtonContainer.axis = .vertical
+        presetButtonContainer.spacing = 8
+        presetSection.addArrangedSubview(presetButtonContainer)
 
-        for style in [ParticleColorStyle.rainbow, .fire, .reddish, .bluish, .greenField, .neonNight] {
+        for style in [ParticleColorStyle.rainbow, .fire, .neonNight, .reddish, .greenField, .bluish] {
             let button = UIButton(type: .system)
             button.setTitle(style.displayName, for: .normal)
-            button.titleLabel?.font = .systemFont(ofSize: 14, weight: .semibold)
-            button.backgroundColor = .secondarySystemBackground
-            button.layer.cornerRadius = 8
-            button.clipsToBounds = true
+            button.titleLabel?.font = .systemFont(ofSize: 13, weight: .semibold)
+            button.titleLabel?.numberOfLines = 2
+            button.titleLabel?.adjustsFontSizeToFitWidth = true
+            button.titleLabel?.minimumScaleFactor = 0.8
+            var config = UIButton.Configuration.filled()
+            config.baseBackgroundColor = .secondarySystemBackground
+            config.baseForegroundColor = .label
+            config.cornerStyle = .medium
+            config.titleAlignment = .center
+            config.contentInsets = NSDirectionalEdgeInsets(top: 8, leading: 8, bottom: 8, trailing: 8)
+            button.configuration = config
             button.tag = style.rawValue
             button.addTarget(self, action: #selector(spectrumPresetTapped(_:)), for: .touchUpInside)
-            presetButtonRow.addArrangedSubview(button)
+            presetButtons.append(button)
         }
         
         NSLayoutConstraint.activate([
@@ -513,6 +524,11 @@ final class ParticleColorSettingsViewController: UIViewController {
 
         updateModeVisibility()
     }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        updatePresetButtonLayout()
+    }
     
     @objc private func colorModeChanged(_ sender: UISegmentedControl) {
         if sender.selectedSegmentIndex == 0 {
@@ -541,6 +557,7 @@ final class ParticleColorSettingsViewController: UIViewController {
     }
     
     func applyConfiguration() {
+        guard isViewLoaded else { return }
         if isSingleColorMode {
             renderer.setParticleColorStyle(.singleColor)
             renderer.setSingleColor(selectedSingleColor.toSIMD4Float())
@@ -556,5 +573,40 @@ final class ParticleColorSettingsViewController: UIViewController {
         modeControl.selectedSegmentIndex = isSingleColorMode ? 0 : 1
         wheelBottomConstraint?.isActive = isSingleColorMode
         spectrumBottomConstraint?.isActive = !isSingleColorMode
+    }
+
+    private func updatePresetButtonLayout() {
+        let availableWidth = view.bounds.width - 40 // matches leading/trailing content margins
+        let shouldWrap = availableWidth < 680
+        let desiredMode: PresetButtonLayoutMode = shouldWrap ? .wrappedRows : .singleRow
+        guard desiredMode != currentPresetButtonLayoutMode else { return }
+        currentPresetButtonLayoutMode = desiredMode
+
+        while let arranged = presetButtonContainer.arrangedSubviews.first {
+            presetButtonContainer.removeArrangedSubview(arranged)
+            arranged.removeFromSuperview()
+        }
+
+        let rows: [[UIButton]]
+        switch desiredMode {
+        case .singleRow:
+            rows = [presetButtons]
+        case .wrappedRows:
+            rows = Array(stride(from: 0, to: presetButtons.count, by: 3)).map { start in
+                Array(presetButtons[start..<min(start + 3, presetButtons.count)])
+            }
+        }
+
+        for rowButtons in rows {
+            let row = UIStackView()
+            row.axis = .horizontal
+            row.spacing = 8
+            row.distribution = .fillEqually
+            row.alignment = .fill
+            for button in rowButtons {
+                row.addArrangedSubview(button)
+            }
+            presetButtonContainer.addArrangedSubview(row)
+        }
     }
 }
