@@ -147,10 +147,11 @@ final class SpectrumEditorView: UIView {
             let path = UIBezierPath()
             let samples = 120
             for i in 0...samples {
-                let t = Float(i) / Float(samples)
-                let c = sampleColor(at: t)
-                let p = CGPoint(x: drawRect.minX + CGFloat(t) * drawRect.width,
-                                y: drawRect.maxY - CGFloat(sampleHeight(at: t)) * drawRect.height)
+                let displayX = Float(i) / Float(samples)
+                let dataX = dataX(fromDisplayX: displayX)
+                let c = sampleColor(at: dataX)
+                let p = CGPoint(x: drawRect.minX + CGFloat(displayX) * drawRect.width,
+                                y: drawRect.maxY - CGFloat(sampleHeight(at: dataX)) * drawRect.height)
                 if i == 0 { path.move(to: p) } else { path.addLine(to: p) }
 
                 let fill = UIBezierPath(arcCenter: p, radius: 1.5, startAngle: 0, endAngle: 2 * .pi, clockwise: true)
@@ -163,7 +164,7 @@ final class SpectrumEditorView: UIView {
         }
 
         for (index, point) in spectrum.controlPoints.enumerated() {
-            let p = CGPoint(x: drawRect.minX + CGFloat(point.x) * drawRect.width,
+            let p = CGPoint(x: drawRect.minX + CGFloat(displayX(fromDataX: point.x)) * drawRect.width,
                             y: drawRect.maxY - CGFloat(point.y) * drawRect.height)
             let circle = UIBezierPath(arcCenter: p, radius: pointRadius, startAngle: 0, endAngle: 2 * .pi, clockwise: true)
             let pointColor = pointColorAtX(point.x)
@@ -189,7 +190,7 @@ final class SpectrumEditorView: UIView {
         var closestIndex = -1
         var closestDistance = CGFloat.infinity
         for (index, controlPoint) in spectrum.controlPoints.enumerated() {
-            let p = CGPoint(x: drawRect.minX + CGFloat(controlPoint.x) * drawRect.width,
+            let p = CGPoint(x: drawRect.minX + CGFloat(displayX(fromDataX: controlPoint.x)) * drawRect.width,
                             y: drawRect.maxY - CGFloat(controlPoint.y) * drawRect.height)
             let distance = hypot(point.x - p.x, point.y - p.y)
             if distance < closestDistance && distance <= pointRadius * 2 {
@@ -206,14 +207,18 @@ final class SpectrumEditorView: UIView {
         let point = touch.location(in: self)
         let drawRect = bounds.insetBy(dx: inset, dy: inset)
 
-        let normalizedX = Float((point.x - drawRect.minX) / drawRect.width)
+        let displayNormalizedX = Float((point.x - drawRect.minX) / drawRect.width)
+        let normalizedX = dataX(fromDisplayX: displayNormalizedX)
         let normalizedY = Float((drawRect.maxY - point.y) / drawRect.height)
         if index == 0 {
             spectrum.controlPoints[index].x = 0.0
         } else if index == spectrum.controlPoints.count - 1 {
             spectrum.controlPoints[index].x = 1.0
         } else {
-            spectrum.controlPoints[index].x = max(0, min(1, normalizedX))
+            let epsilon: Float = 0.001
+            let minX = spectrum.controlPoints[index - 1].x + epsilon
+            let maxX = spectrum.controlPoints[index + 1].x - epsilon
+            spectrum.controlPoints[index].x = max(minX, min(maxX, max(0, min(1, normalizedX))))
         }
         spectrum.controlPoints[index].y = max(0, min(1, normalizedY))
         let rgb = pointColorAtX(spectrum.controlPoints[index].x)
@@ -266,12 +271,12 @@ final class SpectrumEditorView: UIView {
 
     private func drawSpectrumBackground(in rect: CGRect, context: CGContext) {
         let colors: [CGColor] = [
-            UIColor(red: 0.58, green: 0.0, blue: 0.83, alpha: 1).cgColor,
-            UIColor(red: 0.15, green: 0.35, blue: 1.0, alpha: 1).cgColor,
-            UIColor(red: 0.0, green: 0.9, blue: 0.65, alpha: 1).cgColor,
-            UIColor(red: 1.0, green: 0.9, blue: 0.1, alpha: 1).cgColor,
+            UIColor(red: 0.9, green: 0.05, blue: 0.05, alpha: 1).cgColor,
             UIColor(red: 1.0, green: 0.45, blue: 0.0, alpha: 1).cgColor,
-            UIColor(red: 0.9, green: 0.05, blue: 0.05, alpha: 1).cgColor
+            UIColor(red: 1.0, green: 0.9, blue: 0.1, alpha: 1).cgColor,
+            UIColor(red: 0.0, green: 0.9, blue: 0.65, alpha: 1).cgColor,
+            UIColor(red: 0.15, green: 0.35, blue: 1.0, alpha: 1).cgColor,
+            UIColor(red: 0.58, green: 0.0, blue: 0.83, alpha: 1).cgColor
         ]
         let locations: [CGFloat] = [0.0, 0.2, 0.45, 0.7, 0.88, 1.0]
         if let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors as CFArray, locations: locations) {
@@ -342,12 +347,20 @@ final class SpectrumEditorView: UIView {
         let localT = (clamped - left.x) / range
         return left[keyPath: keyPath] + (right[keyPath: keyPath] - left[keyPath: keyPath]) * localT
     }
+
+    private func displayX(fromDataX x: Float) -> Float {
+        return 1.0 - max(0, min(x, 1))
+    }
+
+    private func dataX(fromDisplayX x: Float) -> Float {
+        return 1.0 - max(0, min(x, 1))
+    }
 }
 
 final class ParticleColorSettingsViewController: UIViewController {
     
     var renderer: Renderer!
-    private var selectedColorStyle: ParticleColorStyle = .singleColor
+    private var isSingleColorMode = true
     private var selectedSpectrumPreset: ParticleColorStyle = .rainbow
     private var spectrum: ColorSpectrum = ColorSpectrum()
     private var spectrumEditor: SpectrumEditorView!
@@ -356,11 +369,13 @@ final class ParticleColorSettingsViewController: UIViewController {
     private var wheelContainer: UIStackView!
     private var modeControl: UISegmentedControl!
     private var selectedSingleColor: UIColor = .white
+    private var wheelBottomConstraint: NSLayoutConstraint?
+    private var spectrumBottomConstraint: NSLayoutConstraint?
     
     override func viewDidLoad() {
         super.viewDidLoad()
         
-        selectedColorStyle = renderer.particleColorStyle
+        isSingleColorMode = renderer.particleColorStyle == .singleColor
         spectrum = renderer.colorSpectrum
         selectedSpectrumPreset = renderer.colorSpectrum.preset == .singleColor ? .rainbow : renderer.colorSpectrum.preset
         selectedSingleColor = UIColor(cgColor: CGColor(red: CGFloat(renderer.colorSpectrum.singleColor.x), green: CGFloat(renderer.colorSpectrum.singleColor.y), blue: CGFloat(renderer.colorSpectrum.singleColor.z), alpha: CGFloat(renderer.colorSpectrum.singleColor.w)))
@@ -382,7 +397,7 @@ final class ParticleColorSettingsViewController: UIViewController {
 
         modeControl = UISegmentedControl(items: ["Single Color", "Spectrum"])
         modeControl.translatesAutoresizingMaskIntoConstraints = false
-        modeControl.selectedSegmentIndex = selectedColorStyle == .singleColor ? 0 : 1
+        modeControl.selectedSegmentIndex = isSingleColorMode ? 0 : 1
         modeControl.addTarget(self, action: #selector(colorModeChanged(_:)), for: .valueChanged)
         contentView.addSubview(modeControl)
 
@@ -405,7 +420,7 @@ final class ParticleColorSettingsViewController: UIViewController {
         colorWheelView.onColorChanged = { [weak self] uiColor in
             guard let self else { return }
             self.selectedSingleColor = uiColor
-            if self.selectedColorStyle == .singleColor {
+            if self.isSingleColorMode {
                 self.renderer.setSingleColor(uiColor.toSIMD4Float())
             }
         }
@@ -433,21 +448,27 @@ final class ParticleColorSettingsViewController: UIViewController {
         }
         spectrumContainer.addArrangedSubview(spectrumEditor)
 
+        let presetRow = UIStackView()
+        presetRow.axis = .horizontal
+        presetRow.spacing = 10
+        presetRow.alignment = .center
+        spectrumContainer.addArrangedSubview(presetRow)
+
         let presetLabel = UILabel()
-        presetLabel.translatesAutoresizingMaskIntoConstraints = false
-        presetLabel.text = "Presets"
+        presetLabel.text = "Reset Spectrum to Preset:"
         presetLabel.font = .systemFont(ofSize: 14, weight: .medium)
         presetLabel.textColor = .secondaryLabel
-        spectrumContainer.addArrangedSubview(presetLabel)
+        presetLabel.setContentHuggingPriority(.required, for: .horizontal)
+        presetLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        presetRow.addArrangedSubview(presetLabel)
 
         let presetButtonRow = UIStackView()
-        presetButtonRow.translatesAutoresizingMaskIntoConstraints = false
         presetButtonRow.axis = .horizontal
         presetButtonRow.spacing = 8
         presetButtonRow.distribution = .fillEqually
-        spectrumContainer.addArrangedSubview(presetButtonRow)
+        presetRow.addArrangedSubview(presetButtonRow)
 
-        for style in [ParticleColorStyle.rainbow, .fire, .pastel, .neon] {
+        for style in [ParticleColorStyle.rainbow, .fire, .reddish, .bluish, .greenField, .neonNight] {
             let button = UIButton(type: .system)
             button.setTitle(style.displayName, for: .normal)
             button.titleLabel?.font = .systemFont(ofSize: 14, weight: .semibold)
@@ -458,14 +479,6 @@ final class ParticleColorSettingsViewController: UIViewController {
             button.addTarget(self, action: #selector(spectrumPresetTapped(_:)), for: .touchUpInside)
             presetButtonRow.addArrangedSubview(button)
         }
-
-        let hintLabel = UILabel()
-        hintLabel.translatesAutoresizingMaskIntoConstraints = false
-        hintLabel.text = "Single Color uses the wheel. Other presets use the spectrum graph."
-        hintLabel.font = .systemFont(ofSize: 12, weight: .regular)
-        hintLabel.textColor = .secondaryLabel
-        hintLabel.numberOfLines = 0
-        contentView.addSubview(hintLabel)
         
         NSLayoutConstraint.activate([
             scrollView.topAnchor.constraint(equalTo: view.topAnchor),
@@ -493,25 +506,25 @@ final class ParticleColorSettingsViewController: UIViewController {
             spectrumContainer.topAnchor.constraint(equalTo: modeControl.bottomAnchor, constant: 20),
             spectrumContainer.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
             spectrumContainer.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
-
-            hintLabel.topAnchor.constraint(equalTo: (selectedColorStyle == .singleColor ? wheelContainer : spectrumContainer).bottomAnchor, constant: 8),
-            hintLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
-            hintLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
-            hintLabel.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -20)
         ])
+
+        wheelBottomConstraint = wheelContainer.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -20)
+        spectrumBottomConstraint = spectrumContainer.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -20)
 
         updateModeVisibility()
     }
     
     @objc private func colorModeChanged(_ sender: UISegmentedControl) {
         if sender.selectedSegmentIndex == 0 {
-            selectedColorStyle = .singleColor
+            isSingleColorMode = true
             renderer.setParticleColorStyle(.singleColor)
             renderer.setSingleColor(selectedSingleColor.toSIMD4Float())
         } else {
-            selectedColorStyle = selectedSpectrumPreset
-            spectrum.applyPreset(selectedSpectrumPreset)
-            spectrumEditor.spectrum = spectrum
+            isSingleColorMode = false
+            if spectrum.preset == .singleColor {
+                spectrum.applyPreset(selectedSpectrumPreset)
+                spectrumEditor.spectrum = spectrum
+            }
             renderer.setColorSpectrum(spectrum)
         }
         updateModeVisibility()
@@ -520,14 +533,15 @@ final class ParticleColorSettingsViewController: UIViewController {
     @objc private func spectrumPresetTapped(_ sender: UIButton) {
         guard let style = ParticleColorStyle(rawValue: sender.tag), style != .singleColor else { return }
         selectedSpectrumPreset = style
-        selectedColorStyle = style
+        isSingleColorMode = false
         spectrum.applyPreset(style)
         spectrumEditor.spectrum = spectrum
         renderer.setColorSpectrum(spectrum)
+        updateModeVisibility()
     }
     
     func applyConfiguration() {
-        if selectedColorStyle == .singleColor {
+        if isSingleColorMode {
             renderer.setParticleColorStyle(.singleColor)
             renderer.setSingleColor(selectedSingleColor.toSIMD4Float())
         } else {
@@ -536,13 +550,11 @@ final class ParticleColorSettingsViewController: UIViewController {
     }
 
     private func updateModeVisibility() {
-        wheelContainer.isHidden = selectedColorStyle != .singleColor
-        spectrumContainer.isHidden = selectedColorStyle == .singleColor
+        wheelContainer.isHidden = !isSingleColorMode
+        spectrumContainer.isHidden = isSingleColorMode
         colorWheelView.color = selectedSingleColor
-        modeControl.selectedSegmentIndex = selectedColorStyle == .singleColor ? 0 : 1
-        if selectedColorStyle != .singleColor {
-            spectrum.applyPreset(selectedColorStyle)
-            spectrumEditor.spectrum = spectrum
-        }
+        modeControl.selectedSegmentIndex = isSingleColorMode ? 0 : 1
+        wheelBottomConstraint?.isActive = isSingleColorMode
+        spectrumBottomConstraint?.isActive = !isSingleColorMode
     }
 }
