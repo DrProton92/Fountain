@@ -49,7 +49,7 @@ enum ParticleSizeMode: Int, CaseIterable {
     var displayName: String {
         switch self {
         case .constant: return "Constant"
-        case .random: return "Random Distribution"
+        case .random: return "Spectrum"
         }
     }
 }
@@ -70,6 +70,7 @@ enum SizeDistributionPreset: Int, CaseIterable {
 
 struct SizeDistribution {
     var controlPoints: [SizeDistributionPoint] = []
+    private let presetPointCount = 10
     
     init() {
         // Initialize with a uniform distribution
@@ -80,33 +81,63 @@ struct SizeDistribution {
     }
     
     mutating func applyPreset(_ preset: SizeDistributionPreset) {
+        func points(from values: [(Float, Float)]) -> [SizeDistributionPoint] {
+            let raw = values.map { SizeDistributionPoint(x: $0.0, y: max(0, min($0.1, 1.0))) }
+            return SizeDistribution.resample(points: raw, count: presetPointCount)
+        }
+
         switch preset {
         case .gaussian:
-            // Bell curve centered
-            self.controlPoints = [
-                SizeDistributionPoint(x: 0.0, y: 0.0),
-                SizeDistributionPoint(x: 0.25, y: 0.5),
-                SizeDistributionPoint(x: 0.5, y: 1.0),
-                SizeDistributionPoint(x: 0.75, y: 0.5),
-                SizeDistributionPoint(x: 1.0, y: 0.0)
-            ]
+            self.controlPoints = points(from: [
+                (0.0, 0.0),
+                (0.25, 0.5),
+                (0.5, 1.0),
+                (0.75, 0.5),
+                (1.0, 0.0)
+            ])
         case .skewedLeft:
-            // More weight on the left
-            self.controlPoints = [
-                SizeDistributionPoint(x: 0.0, y: 1.0),
-                SizeDistributionPoint(x: 0.3, y: 0.8),
-                SizeDistributionPoint(x: 0.7, y: 0.3),
-                SizeDistributionPoint(x: 1.0, y: 0.0)
-            ]
+            self.controlPoints = points(from: [
+                (0.0, 1.0),
+                (0.3, 0.8),
+                (0.7, 0.3),
+                (1.0, 0.0)
+            ])
         case .skewedRight:
-            // More weight on the right
-            self.controlPoints = [
-                SizeDistributionPoint(x: 0.0, y: 0.0),
-                SizeDistributionPoint(x: 0.3, y: 0.3),
-                SizeDistributionPoint(x: 0.7, y: 0.8),
-                SizeDistributionPoint(x: 1.0, y: 1.0)
-            ]
+            self.controlPoints = points(from: [
+                (0.0, 0.0),
+                (0.3, 0.3),
+                (0.7, 0.8),
+                (1.0, 1.0)
+            ])
         }
+    }
+
+    static func resample(points: [SizeDistributionPoint], count: Int) -> [SizeDistributionPoint] {
+        guard count > 1, !points.isEmpty else { return points }
+        let sorted = points.sorted { $0.x < $1.x }
+        return (0..<count).map { i in
+            let x = Float(i) / Float(count - 1)
+            let y = sampleValue(at: x, points: sorted)
+            return SizeDistributionPoint(x: x, y: y)
+        }
+    }
+
+    private static func sampleValue(at normalized: Float, points: [SizeDistributionPoint]) -> Float {
+        let clamped = max(0, min(normalized, 1.0))
+        guard points.count > 1 else { return points.first?.y ?? 0.5 }
+        var left = points[0]
+        var right = points[1]
+        for i in 0..<(points.count - 1) {
+            if points[i].x <= clamped && clamped <= points[i + 1].x {
+                left = points[i]
+                right = points[i + 1]
+                break
+            }
+        }
+        let range = right.x - left.x
+        if range < 0.0001 { return left.y }
+        let t = (clamped - left.x) / range
+        return left.y + (right.y - left.y) * t
     }
     
     func sampleValue(at normalized: Float) -> Float {
@@ -599,11 +630,22 @@ class Renderer: NSObject, MTKViewDelegate {
         case .random:
             let sizeRange = maxSizeRange - minSizeRange
             for i in 0..<activeParticleCount {
-                let randomValue = Float.random(in: 0.0...1.0)
+                // Stable per-particle random value avoids visual color/size coupling when size settings change.
+                let randomValue = Renderer.stableUnitRandom(for: i)
                 let distributionWeight = sizeDistribution.sampleValue(at: randomValue)
                 particlesPtr[i].size = minSizeRange + (sizeRange * distributionWeight)
             }
         }
+    }
+
+    private static func stableUnitRandom(for index: Int) -> Float {
+        var x = UInt32(bitPattern: Int32(truncatingIfNeeded: index))
+        x ^= x >> 16
+        x = x &* 0x7feb_352d
+        x ^= x >> 15
+        x = x &* 0x846c_a68b
+        x ^= x >> 16
+        return Float(x) / Float(UInt32.max)
     }
 
     private func makeViewMatrix() -> matrix_float4x4 {

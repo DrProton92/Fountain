@@ -176,10 +176,17 @@ class ConfigurationViewController: UIViewController {
     }
     
     @objc private func doneTapped() {
-        // Apply all settings, not just the currently visible category.
-        generalSettingsViewController.applyConfiguration()
-        particleColorSettingsViewController.applyConfiguration()
-        particleSizeSettingsViewController.applyConfiguration()
+        // Only apply categories the user has actually opened; otherwise we risk
+        // writing each controller's default property values back into the renderer.
+        if generalSettingsViewController.isViewLoaded {
+            generalSettingsViewController.applyConfiguration()
+        }
+        if particleColorSettingsViewController.isViewLoaded {
+            particleColorSettingsViewController.applyConfiguration()
+        }
+        if particleSizeSettingsViewController.isViewLoaded {
+            particleSizeSettingsViewController.applyConfiguration()
+        }
 
         dismiss(animated: true) {
             self.onDone?()

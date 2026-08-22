@@ -23,6 +23,7 @@ class DistributionEditorView: UIView {
     private let pointColor = UIColor.systemBlue
     private let pointRadius: CGFloat = 8
     private let gridSize: CGFloat = 20
+    private let pointCount = 10
     
     private var selectedPointIndex: Int?
     
@@ -36,6 +37,11 @@ class DistributionEditorView: UIView {
     
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        ensureTenPoints()
     }
     
     override func draw(_ rect: CGRect) {
@@ -162,10 +168,7 @@ class DistributionEditorView: UIView {
             }
         }
         
-        // Only allow dragging interior points, not endpoints
-        if closestIndex > 0 && closestIndex < distribution.controlPoints.count - 1 {
-            selectedPointIndex = closestIndex
-        }
+        selectedPointIndex = closestIndex >= 0 ? closestIndex : nil
     }
     
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
@@ -179,8 +182,17 @@ class DistributionEditorView: UIView {
         let normalizedX = Float((point.x - drawRect.minX) / drawRect.width)
         let normalizedY = Float((drawRect.maxY - point.y) / drawRect.height)
         
-        // Clamp values but allow free X movement between neighbors
-        let clampedX = max(0, min(1, normalizedX))
+        let clampedX: Float
+        if index == 0 {
+            clampedX = 0.0
+        } else if index == distribution.controlPoints.count - 1 {
+            clampedX = 1.0
+        } else {
+            let epsilon: Float = 0.001
+            let minX = distribution.controlPoints[index - 1].x + epsilon
+            let maxX = distribution.controlPoints[index + 1].x - epsilon
+            clampedX = max(minX, min(maxX, max(0, min(1, normalizedX))))
+        }
         let clampedY = max(0, min(1, normalizedY))
         
         distribution.controlPoints[index].x = clampedX
@@ -192,6 +204,40 @@ class DistributionEditorView: UIView {
     
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
         selectedPointIndex = nil
+    }
+
+    private func ensureTenPoints() {
+        guard distribution.controlPoints.count != pointCount else { return }
+        let existing = distribution.controlPoints.isEmpty
+            ? [SizeDistributionPoint(x: 0, y: 0.5)]
+            : distribution.controlPoints.sorted { $0.x < $1.x }
+
+        distribution.controlPoints = (0..<pointCount).map { i in
+            let x = Float(i) / Float(pointCount - 1)
+            let y = interpolate(points: existing, at: x)
+            return SizeDistributionPoint(x: x, y: y)
+        }
+
+        onDistributionChanged?(distribution)
+        setNeedsDisplay()
+    }
+
+    private func interpolate(points: [SizeDistributionPoint], at normalized: Float) -> Float {
+        guard points.count > 1 else { return points.first?.y ?? 0.5 }
+        let clamped = max(0, min(normalized, 1.0))
+        var left = points[0]
+        var right = points[1]
+        for i in 0..<(points.count - 1) {
+            if points[i].x <= clamped && clamped <= points[i + 1].x {
+                left = points[i]
+                right = points[i + 1]
+                break
+            }
+        }
+        let range = right.x - left.x
+        if range < 0.0001 { return left.y }
+        let t = (clamped - left.x) / range
+        return left.y + (right.y - left.y) * t
     }
 }
 
@@ -213,10 +259,10 @@ class ParticleSizeConfigViewController: UIViewController {
     private var randomModeContainer: UIStackView!
     private var minSizeSlider: UISlider!
     private var maxSizeSlider: UISlider!
-    private var minSizeLabel: UILabel!
-    private var maxSizeLabel: UILabel!
+    private var minSizeField: UITextField!
+    private var maxSizeField: UITextField!
     private var distributionEditor: DistributionEditorView!
-    private var presetStackView: UIStackView!
+    private var presetButtonRow: UIStackView!
     
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -260,18 +306,19 @@ class ParticleSizeConfigViewController: UIViewController {
         constantModeContainer.spacing = 8
         mainStack.addArrangedSubview(constantModeContainer)
 
-        let constantSectionLabel = UILabel()
-        constantSectionLabel.translatesAutoresizingMaskIntoConstraints = false
-        constantSectionLabel.text = "Constant Size"
-        constantSectionLabel.font = .boldSystemFont(ofSize: 14)
-        constantModeContainer.addArrangedSubview(constantSectionLabel)
-
         let constantRow = UIStackView()
         constantRow.axis = .horizontal
         constantRow.spacing = 12
         constantRow.alignment = .center
         constantRow.translatesAutoresizingMaskIntoConstraints = false
         constantModeContainer.addArrangedSubview(constantRow)
+
+        let constantLabel = UILabel()
+        constantLabel.translatesAutoresizingMaskIntoConstraints = false
+        constantLabel.text = "Constant Size"
+        constantLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        constantLabel.widthAnchor.constraint(equalToConstant: 96).isActive = true
+        constantRow.addArrangedSubview(constantLabel)
 
         constantSizeSlider = UISlider()
         constantSizeSlider.translatesAutoresizingMaskIntoConstraints = false
@@ -300,47 +347,66 @@ class ParticleSizeConfigViewController: UIViewController {
 
         let distributionSectionLabel = UILabel()
         distributionSectionLabel.translatesAutoresizingMaskIntoConstraints = false
-        distributionSectionLabel.text = "Size Range & Distribution"
+        distributionSectionLabel.text = "Size Range & Spectrum"
         distributionSectionLabel.font = .boldSystemFont(ofSize: 14)
         randomModeContainer.addArrangedSubview(distributionSectionLabel)
 
         let minRow = makeSliderValueRow(title: "Min Size", value: minSize, min: 0.5, max: 25, action: #selector(minSizeChanged))
         minSizeSlider = minRow.slider
-        minSizeLabel = minRow.valueLabel
+        minSizeField = minRow.valueField
         randomModeContainer.addArrangedSubview(minRow.container)
 
         let maxRow = makeSliderValueRow(title: "Max Size", value: maxSize, min: 0.5, max: 50, action: #selector(maxSizeChanged))
         maxSizeSlider = maxRow.slider
-        maxSizeLabel = maxRow.valueLabel
+        maxSizeField = maxRow.valueField
         randomModeContainer.addArrangedSubview(maxRow.container)
+
+        minSizeField.addAction(UIAction { [weak self] _ in
+            self?.minSizeEdited()
+        }, for: .editingDidEnd)
+
+        maxSizeField.addAction(UIAction { [weak self] _ in
+            self?.maxSizeEdited()
+        }, for: .editingDidEnd)
 
         distributionEditor = DistributionEditorView(distribution: distribution)
         distributionEditor.translatesAutoresizingMaskIntoConstraints = false
-        distributionEditor.heightAnchor.constraint(equalToConstant: 150).isActive = true
+        distributionEditor.heightAnchor.constraint(equalToConstant: 240).isActive = true
         distributionEditor.onDistributionChanged = { [weak self] newDist in
             self?.distribution = newDist
         }
         randomModeContainer.addArrangedSubview(distributionEditor)
 
-        let presetLabel = UILabel()
-        presetLabel.translatesAutoresizingMaskIntoConstraints = false
-        presetLabel.text = "Presets"
-        presetLabel.font = .boldSystemFont(ofSize: 14)
-        randomModeContainer.addArrangedSubview(presetLabel)
+        let presetRow = UIStackView()
+        presetRow.axis = .horizontal
+        presetRow.spacing = 10
+        presetRow.alignment = .center
+        randomModeContainer.addArrangedSubview(presetRow)
 
-        presetStackView = UIStackView()
-        presetStackView.translatesAutoresizingMaskIntoConstraints = false
-        presetStackView.axis = .vertical
-        presetStackView.spacing = 8
-        randomModeContainer.addArrangedSubview(presetStackView)
+        let presetLabel = UILabel()
+        presetLabel.text = "Reset Spectrum to Preset:"
+        presetLabel.font = .systemFont(ofSize: 14, weight: .medium)
+        presetLabel.textColor = .secondaryLabel
+        presetLabel.setContentHuggingPriority(.required, for: .horizontal)
+        presetLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        presetRow.addArrangedSubview(presetLabel)
+
+        presetButtonRow = UIStackView()
+        presetButtonRow.axis = .horizontal
+        presetButtonRow.spacing = 8
+        presetButtonRow.distribution = .fillEqually
+        presetRow.addArrangedSubview(presetButtonRow)
         
         for preset in SizeDistributionPreset.allCases {
             let button = UIButton(type: .system)
             button.setTitle(preset.displayName, for: .normal)
+            button.titleLabel?.font = .systemFont(ofSize: 14, weight: .semibold)
+            button.backgroundColor = .secondarySystemBackground
+            button.layer.cornerRadius = 8
+            button.clipsToBounds = true
             button.addTarget(self, action: #selector(presetTapped(_:)), for: .touchUpInside)
             button.tag = preset.rawValue
-            button.titleLabel?.font = .systemFont(ofSize: 14)
-            presetStackView.addArrangedSubview(button)
+            presetButtonRow.addArrangedSubview(button)
         }
 
         NSLayoutConstraint.activate([
@@ -388,22 +454,52 @@ class ParticleSizeConfigViewController: UIViewController {
     
     @objc private func minSizeChanged() {
         minSize = minSizeSlider.value
-        minSizeLabel.text = String(format: "%.1f", minSize)
+        minSizeField.text = String(format: "%.1f", minSize)
         if minSize > maxSize {
             maxSize = minSize
             maxSizeSlider.value = maxSize
-            maxSizeLabel.text = String(format: "%.1f", maxSize)
+            maxSizeField.text = String(format: "%.1f", maxSize)
         }
     }
     
     @objc private func maxSizeChanged() {
         maxSize = maxSizeSlider.value
-        maxSizeLabel.text = String(format: "%.1f", maxSize)
+        maxSizeField.text = String(format: "%.1f", maxSize)
         if maxSize < minSize {
             minSize = maxSize
             minSizeSlider.value = minSize
-            minSizeLabel.text = String(format: "%.1f", minSize)
+            minSizeField.text = String(format: "%.1f", minSize)
         }
+    }
+
+    private func minSizeEdited() {
+        guard let text = minSizeField.text, let value = Float(text) else {
+            minSizeField.text = String(format: "%.1f", minSize)
+            return
+        }
+        minSize = min(max(value, 0.5), 25.0)
+        if minSize > maxSize {
+            maxSize = minSize
+            maxSizeSlider.value = maxSize
+            maxSizeField.text = String(format: "%.1f", maxSize)
+        }
+        minSizeSlider.value = minSize
+        minSizeField.text = String(format: "%.1f", minSize)
+    }
+
+    private func maxSizeEdited() {
+        guard let text = maxSizeField.text, let value = Float(text) else {
+            maxSizeField.text = String(format: "%.1f", maxSize)
+            return
+        }
+        maxSize = min(max(value, 0.5), 50.0)
+        if maxSize < minSize {
+            minSize = maxSize
+            minSizeSlider.value = minSize
+            minSizeField.text = String(format: "%.1f", minSize)
+        }
+        maxSizeSlider.value = maxSize
+        maxSizeField.text = String(format: "%.1f", maxSize)
     }
     
     @objc private func presetTapped(_ sender: UIButton) {
@@ -421,8 +517,8 @@ class ParticleSizeConfigViewController: UIViewController {
         } else {
             minSizeSlider.value = minSize
             maxSizeSlider.value = maxSize
-            minSizeLabel.text = String(format: "%.1f", minSize)
-            maxSizeLabel.text = String(format: "%.1f", maxSize)
+            minSizeField.text = String(format: "%.1f", minSize)
+            maxSizeField.text = String(format: "%.1f", maxSize)
         }
     }
     
@@ -440,26 +536,21 @@ class ParticleSizeConfigViewController: UIViewController {
     private struct SliderValueRow {
         let container: UIStackView
         let slider: UISlider
-        let valueLabel: UILabel
+        let valueField: UITextField
     }
 
     private func makeSliderValueRow(title: String, value: Float, min: Float, max: Float, action: Selector) -> SliderValueRow {
         let container = UIStackView()
-        container.axis = .vertical
-        container.spacing = 4
+        container.axis = .horizontal
+        container.spacing = 12
+        container.alignment = .center
 
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
         label.text = title
-        label.font = .systemFont(ofSize: 12)
+        label.font = .systemFont(ofSize: 13, weight: .medium)
+        label.widthAnchor.constraint(equalToConstant: 96).isActive = true
         container.addArrangedSubview(label)
-
-        let row = UIStackView()
-        row.axis = .horizontal
-        row.spacing = 12
-        row.alignment = .center
-        row.translatesAutoresizingMaskIntoConstraints = false
-        container.addArrangedSubview(row)
 
         let newSlider = UISlider()
         newSlider.translatesAutoresizingMaskIntoConstraints = false
@@ -467,16 +558,17 @@ class ParticleSizeConfigViewController: UIViewController {
         newSlider.maximumValue = max
         newSlider.value = value
         newSlider.addTarget(self, action: action, for: .valueChanged)
-        row.addArrangedSubview(newSlider)
+        container.addArrangedSubview(newSlider)
 
-        let newValueLabel = UILabel()
-        newValueLabel.translatesAutoresizingMaskIntoConstraints = false
-        newValueLabel.text = String(format: "%.1f", value)
-        newValueLabel.font = .systemFont(ofSize: 12)
-        newValueLabel.textAlignment = .center
-        newValueLabel.widthAnchor.constraint(equalToConstant: 40).isActive = true
-        row.addArrangedSubview(newValueLabel)
+        let newValueField = UITextField()
+        newValueField.translatesAutoresizingMaskIntoConstraints = false
+        newValueField.borderStyle = .roundedRect
+        newValueField.keyboardType = .decimalPad
+        newValueField.textAlignment = .center
+        newValueField.text = String(format: "%.1f", value)
+        newValueField.widthAnchor.constraint(equalToConstant: 96).isActive = true
+        container.addArrangedSubview(newValueField)
 
-        return SliderValueRow(container: container, slider: newSlider, valueLabel: newValueLabel)
+        return SliderValueRow(container: container, slider: newSlider, valueField: newValueField)
     }
 }
