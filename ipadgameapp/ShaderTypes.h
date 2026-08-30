@@ -46,6 +46,10 @@ typedef struct {
     shared_uint _padding0;
     shared_uint _padding1;
     shared_uint _padding2;
+    float launchAngleRadians;
+    float angleVarianceRadians;
+    float launchSpeed;
+    float velocityVariance;
 } Uniforms;
 
 #endif /* ShaderTypes_h */

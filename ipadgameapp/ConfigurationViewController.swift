@@ -99,6 +99,8 @@ class ConfigurationViewController: UIViewController {
         detailContainerView.backgroundColor = .systemBackground
         containerView.addSubview(detailContainerView)
         
+        let categoryWidth: CGFloat = traitCollection.userInterfaceIdiom == .phone ? 132 : 180
+
         // Layout constraints
         NSLayoutConstraint.activate([
             containerView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
@@ -109,7 +111,7 @@ class ConfigurationViewController: UIViewController {
             categoryTableView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
             categoryTableView.topAnchor.constraint(equalTo: containerView.topAnchor),
             categoryTableView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor),
-            categoryTableView.widthAnchor.constraint(equalToConstant: 180),
+            categoryTableView.widthAnchor.constraint(equalToConstant: categoryWidth),
             
             detailContainerView.leadingAnchor.constraint(equalTo: categoryTableView.trailingAnchor),
             detailContainerView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),

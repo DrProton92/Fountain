@@ -248,7 +248,7 @@ class ParticleSizeConfigViewController: UIViewController {
     
     private var sizeMode: ParticleSizeMode = .constant
     private var constantSize: Float = 5.0
-    private var minSize: Float = 1.0
+    private var minSize: Float = 5.0
     private var maxSize: Float = 30.0
     private var distribution: SizeDistribution = SizeDistribution()
     
@@ -263,6 +263,13 @@ class ParticleSizeConfigViewController: UIViewController {
     private var maxSizeField: UITextField!
     private var distributionEditor: DistributionEditorView!
     private var presetButtonRow: UIStackView!
+    private var presetButtons: [UIButton] = []
+
+    private enum PresetButtonLayoutMode {
+        case singleRow
+        case wrappedRows
+    }
+    private var currentPresetButtonLayoutMode: PresetButtonLayoutMode?
     
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -369,6 +376,13 @@ class ParticleSizeConfigViewController: UIViewController {
             self?.maxSizeEdited()
         }, for: .editingDidEnd)
 
+        let editableSpectrumLabel = UILabel()
+        editableSpectrumLabel.translatesAutoresizingMaskIntoConstraints = false
+        editableSpectrumLabel.text = "Editable Spectrum"
+        editableSpectrumLabel.font = .systemFont(ofSize: 14, weight: .semibold)
+        editableSpectrumLabel.textColor = .secondaryLabel
+        randomModeContainer.addArrangedSubview(editableSpectrumLabel)
+
         distributionEditor = DistributionEditorView(distribution: distribution)
         distributionEditor.translatesAutoresizingMaskIntoConstraints = false
         distributionEditor.heightAnchor.constraint(equalToConstant: 240).isActive = true
@@ -378,26 +392,24 @@ class ParticleSizeConfigViewController: UIViewController {
         randomModeContainer.addArrangedSubview(distributionEditor)
 
         let presetRow = UIStackView()
-        presetRow.axis = .horizontal
-        presetRow.spacing = 10
-        presetRow.alignment = .center
+        presetRow.axis = .vertical
+        presetRow.spacing = 8
+        presetRow.alignment = .fill
         randomModeContainer.addArrangedSubview(presetRow)
 
         let presetLabel = UILabel()
         presetLabel.text = "Reset Spectrum to Preset:"
         presetLabel.font = .systemFont(ofSize: 14, weight: .medium)
         presetLabel.textColor = .secondaryLabel
-        presetLabel.setContentHuggingPriority(.required, for: .horizontal)
-        presetLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         presetRow.addArrangedSubview(presetLabel)
 
         presetButtonRow = UIStackView()
-        presetButtonRow.axis = .horizontal
+        presetButtonRow.axis = .vertical
         presetButtonRow.spacing = 8
-        presetButtonRow.distribution = .fillEqually
+        presetButtonRow.alignment = .fill
         presetRow.addArrangedSubview(presetButtonRow)
 
-        let orderedPresets: [SizeDistributionPreset] = [.flat, .skewedLeft, .gaussian, .skewedRight]
+        let orderedPresets: [SizeDistributionPreset] = [.flat, .skewedLeft, .gaussian, .skewedRight, .bigAndSmall]
         for preset in orderedPresets {
             let button = UIButton(type: .system)
             button.setTitle(preset.displayName, for: .normal)
@@ -410,7 +422,7 @@ class ParticleSizeConfigViewController: UIViewController {
             button.configuration = config
             button.addTarget(self, action: #selector(presetTapped(_:)), for: .touchUpInside)
             button.tag = preset.rawValue
-            presetButtonRow.addArrangedSubview(button)
+            presetButtons.append(button)
         }
 
         NSLayoutConstraint.activate([
@@ -434,6 +446,11 @@ class ParticleSizeConfigViewController: UIViewController {
         ])
 
         updateUI()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        updatePresetButtonLayout()
     }
     
     @objc private func sizeModeChanged() {
@@ -510,6 +527,44 @@ class ParticleSizeConfigViewController: UIViewController {
         let preset = SizeDistributionPreset(rawValue: sender.tag) ?? .gaussian
         distribution.applyPreset(preset)
         distributionEditor.distribution = distribution
+    }
+
+    private func updatePresetButtonLayout() {
+        let availableWidth = randomModeContainer.bounds.width
+        guard availableWidth > 0 else { return }
+
+        let shouldWrap = availableWidth < 680
+        let desiredMode: PresetButtonLayoutMode = shouldWrap ? .wrappedRows : .singleRow
+        guard desiredMode != currentPresetButtonLayoutMode else { return }
+        currentPresetButtonLayoutMode = desiredMode
+
+        while let arranged = presetButtonRow.arrangedSubviews.first {
+            presetButtonRow.removeArrangedSubview(arranged)
+            arranged.removeFromSuperview()
+        }
+
+        let rows: [[UIButton]]
+        switch desiredMode {
+        case .singleRow:
+            rows = [presetButtons]
+        case .wrappedRows:
+            rows = stride(from: 0, to: presetButtons.count, by: 3).map { start in
+                let end = min(start + 3, presetButtons.count)
+                return Array(presetButtons[start..<end])
+            }
+        }
+
+        for rowButtons in rows {
+            let row = UIStackView()
+            row.axis = .horizontal
+            row.spacing = 8
+            row.distribution = .fillEqually
+            row.alignment = .fill
+            for button in rowButtons {
+                row.addArrangedSubview(button)
+            }
+            presetButtonRow.addArrangedSubview(row)
+        }
     }
     
     private func updateUI() {

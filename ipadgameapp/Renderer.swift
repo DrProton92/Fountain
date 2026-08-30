@@ -36,7 +36,7 @@ enum ParticleColorStyle: Int, CaseIterable {
         case .fire: return "Fire"
         case .reddish: return "Reddish"
         case .bluish: return "Bluish"
-        case .greenField: return "Green Field"
+        case .greenField: return "Greenish"
         case .neonNight: return "Neon Night"
         }
     }
@@ -59,13 +59,15 @@ enum SizeDistributionPreset: Int, CaseIterable {
     case skewedLeft
     case skewedRight
     case flat
+    case bigAndSmall
 
     var displayName: String {
         switch self {
         case .gaussian: return "Gaussian"
-        case .skewedLeft: return "Skewed Left"
-        case .skewedRight: return "Skewed Right"
+        case .skewedLeft: return "Smallish"
+        case .skewedRight: return "Largish"
         case .flat: return "Flat"
+        case .bigAndSmall: return "Big&Small"
         }
     }
 }
@@ -118,6 +120,13 @@ struct SizeDistribution {
         case .flat:
             self.controlPoints = points(from: [
                 (0.0, 1.0),
+                (1.0, 1.0)
+            ])
+        case .bigAndSmall:
+            self.controlPoints = points(from: [
+                (0.0, 1.0),
+                (0.1, 0.0),
+                (0.9, 0.0),
                 (1.0, 1.0)
             ])
         }
@@ -397,8 +406,14 @@ class Renderer: NSObject, MTKViewDelegate {
     private(set) var particleSizeMode: ParticleSizeMode = .constant
     private(set) var constantParticleSize: Float = 5.0
     private(set) var sizeDistribution: SizeDistribution = SizeDistribution()
-    private(set) var minSizeRange: Float = 1.0
+    private(set) var minSizeRange: Float = 5.0
     private(set) var maxSizeRange: Float = 30.0
+
+    // Launch configuration
+    private(set) var launchAngleDegrees: Float = 0.0
+    private(set) var angleVarianceDegrees: Float = 12.0
+    private(set) var velocityVariancePercent: Float = 0.0
+    private let launchSpeed: Float = 0.04
     
     var projectionMatrix: matrix_float4x4 = matrix_float4x4()
     var cameraYaw: Float = 0
@@ -445,17 +460,17 @@ class Renderer: NSObject, MTKViewDelegate {
         // Initialize particles using direct property assignment
         let particlesPtr = particleBuffer.contents().bindMemory(to: Particle.self, capacity: maxRenderableParticleCount)
         for i in 0..<maxRenderableParticleCount {
-            let angle = Float(i) / 1000.0 * 2.0 * Float.pi
-            
-            let radial = Float.random(in: 0.008...0.012)
-            let upward = Float.random(in: 0.03...0.05)
             particlesPtr[i].position = SIMD3<Float>(0, 0, 0)
-            particlesPtr[i].velocity = SIMD3<Float>(cos(angle) * radial, upward, sin(angle) * radial)
+            particlesPtr[i].velocity = Renderer.launchVelocity(for: i,
+                                                              launchAngleDegrees: launchAngleDegrees,
+                                                              angleVarianceDegrees: angleVarianceDegrees,
+                                                              velocityVariancePercent: velocityVariancePercent,
+                                                              speed: launchSpeed)
             particlesPtr[i].color = Renderer.spectrumColor(for: i, count: maxRenderableParticleCount, spectrum: initialSpectrum)
             particlesPtr[i].life = Float.random(in: 0.1...1.0)
             particlesPtr[i].size = constantParticleSize
         }
-        
+
         // 3. Setup Pipelines
         let library = device.makeDefaultLibrary()
         guard let computeFunc = library?.makeFunction(name: "particle_compute"),
@@ -474,8 +489,9 @@ class Renderer: NSObject, MTKViewDelegate {
         
         guard let rState = try? device.makeRenderPipelineState(descriptor: pipelineDescriptor) else { return nil }
         self.renderPipelineState = rState
-        
+
         super.init()
+        regenerateParticleLaunchVelocities()
     }
     
     func updateDynamicBufferState() {
@@ -488,9 +504,10 @@ class Renderer: NSObject, MTKViewDelegate {
         frameUniforms.projectionMatrix = projectionMatrix
         frameUniforms.viewMatrix = makeViewMatrix()
         frameUniforms.particleCount = UInt32(activeParticleCount)
-        frameUniforms._padding0 = 0
-        frameUniforms._padding1 = 0
-        frameUniforms._padding2 = 0
+        frameUniforms.launchAngleRadians = radians_from_degrees(launchAngleDegrees)
+        frameUniforms.angleVarianceRadians = radians_from_degrees(angleVarianceDegrees)
+        frameUniforms.launchSpeed = launchSpeed
+        frameUniforms.velocityVariance = max(0.0, min(velocityVariancePercent, 100.0)) / 100.0
 
         // Write one frame's uniforms into the ring-buffer slot.
         let destination = uniformBufferRawPointer.advanced(by: uniformBufferOffset)
@@ -570,6 +587,7 @@ class Renderer: NSObject, MTKViewDelegate {
          activeParticleCount = clamped
          applyColorStyle(in: 0..<activeParticleCount)
          regenerateParticleSizes()  // Assign sizes to new particles
+         regenerateParticleLaunchVelocities()
      }
 
     func setParticleColorStyle(_ style: ParticleColorStyle) {
@@ -630,6 +648,32 @@ class Renderer: NSObject, MTKViewDelegate {
         }
     }
 
+    func setLaunchAngle(_ degrees: Float) {
+        launchAngleDegrees = max(0.0, min(degrees, 90.0))
+        regenerateParticleLaunchVelocities()
+    }
+
+    func setAngleVariance(_ degrees: Float) {
+        angleVarianceDegrees = max(0.0, min(degrees, 90.0))
+        regenerateParticleLaunchVelocities()
+    }
+
+    func setVelocityVariance(_ percent: Float) {
+        velocityVariancePercent = max(0.0, min(percent, 100.0))
+        regenerateParticleLaunchVelocities()
+    }
+
+    private func regenerateParticleLaunchVelocities() {
+        let particlesPtr = particleBuffer.contents().bindMemory(to: Particle.self, capacity: maxRenderableParticleCount)
+        for i in 0..<activeParticleCount {
+            particlesPtr[i].velocity = Renderer.launchVelocity(for: i,
+                                                               launchAngleDegrees: launchAngleDegrees,
+                                                               angleVarianceDegrees: angleVarianceDegrees,
+                                                               velocityVariancePercent: velocityVariancePercent,
+                                                               speed: launchSpeed)
+        }
+    }
+
     private func regenerateParticleSizes() {
         let particlesPtr = particleBuffer.contents().bindMemory(to: Particle.self, capacity: maxRenderableParticleCount)
         
@@ -641,12 +685,31 @@ class Renderer: NSObject, MTKViewDelegate {
         case .random:
             let sizeRange = maxSizeRange - minSizeRange
             for i in 0..<activeParticleCount {
-                // Stable per-particle random value avoids visual color/size coupling when size settings change.
                 let randomValue = Renderer.stableUnitRandom(for: i)
-                let distributionWeight = sizeDistribution.sampleValue(at: randomValue)
-                particlesPtr[i].size = minSizeRange + (sizeRange * distributionWeight)
+                let normalizedSize = Renderer.weightedSizePosition(for: randomValue, distribution: sizeDistribution)
+                particlesPtr[i].size = minSizeRange + (sizeRange * normalizedSize)
             }
         }
+    }
+
+    private static func weightedSizePosition(for unitRandom: Float, distribution: SizeDistribution) -> Float {
+        let points = distribution.controlPoints.sorted { $0.x < $1.x }
+        guard !points.isEmpty else { return max(0, min(unitRandom, 1.0)) }
+
+        let weights = points.map { max(0, $0.y) }
+        let totalWeight = weights.reduce(0, +)
+        guard totalWeight > 0.000001 else { return max(0, min(unitRandom, 1.0)) }
+
+        let target = max(0, min(unitRandom, 1.0)) * totalWeight
+        var cumulative: Float = 0
+        for i in 0..<points.count {
+            cumulative += weights[i]
+            if target <= cumulative || i == points.count - 1 {
+                return points[i].x
+            }
+        }
+
+        return points.last?.x ?? 0.5
     }
 
     private static func stableUnitRandom(for index: Int) -> Float {
@@ -657,6 +720,33 @@ class Renderer: NSObject, MTKViewDelegate {
         x = x &* 0x846c_a68b
         x ^= x >> 16
         return Float(x) / Float(UInt32.max)
+    }
+
+    private static func launchVelocity(for index: Int,
+                                       launchAngleDegrees: Float,
+                                       angleVarianceDegrees: Float,
+                                       velocityVariancePercent: Float,
+                                       speed: Float) -> SIMD3<Float> {
+        let launchRadians = radians_from_degrees(max(0.0, min(launchAngleDegrees, 90.0)))
+        let coneHalfRadians = radians_from_degrees(max(0.0, min(angleVarianceDegrees, 90.0))) * 0.5
+        let velocityVariance = max(0.0, min(velocityVariancePercent, 100.0)) / 100.0
+
+        let axis = simd_normalize(SIMD3<Float>(sin(launchRadians), cos(launchRadians), 0))
+        let u = stableUnitRandom(for: index &* 1664525 &+ 1013904223)
+        let v = stableUnitRandom(for: index &* 22695477 &+ 1)
+        let w = stableUnitRandom(for: index &* 1103515245 &+ 12345)
+
+        let cosAlpha = ((1 - u) * cos(coneHalfRadians)) + u
+        let sinAlpha = sqrt(max(0, 1 - (cosAlpha * cosAlpha)))
+        let phi = 2 * Float.pi * v
+
+        let helper = abs(axis.y) < 0.99 ? SIMD3<Float>(0, 1, 0) : SIMD3<Float>(1, 0, 0)
+        let tangent = simd_normalize(simd_cross(helper, axis))
+        let bitangent = simd_cross(axis, tangent)
+        let direction = simd_normalize(axis * cosAlpha + tangent * (cos(phi) * sinAlpha) + bitangent * (sin(phi) * sinAlpha))
+
+        let speedScale = (1 - velocityVariance) + velocityVariance * (1 + ((2 * w) - 1))
+        return direction * (speed * max(0, speedScale))
     }
 
     private func makeViewMatrix() -> matrix_float4x4 {
