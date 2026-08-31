@@ -16,6 +16,7 @@
 using namespace metal;
 
 constant uint kMaxParticleCount = 100000000;
+constant uint kMaxTrailHistorySamples = 8;
 
 inline float stableRandom(uint seed) {
     uint x = seed;
@@ -25,6 +26,84 @@ inline float stableRandom(uint seed) {
     x *= 0x846ca68b;
     x ^= x >> 16;
     return float(x) / 4294967295.0;
+}
+
+inline float sampledLaunchSpeed(uint id, constant Uniforms& uniforms) {
+    if (uniforms.velocityMode == 0u) {
+        return uniforms.launchSpeed;
+    }
+
+    float weights[10] = {
+        max(0.0f, uniforms.velocityWeight0),
+        max(0.0f, uniforms.velocityWeight1),
+        max(0.0f, uniforms.velocityWeight2),
+        max(0.0f, uniforms.velocityWeight3),
+        max(0.0f, uniforms.velocityWeight4),
+        max(0.0f, uniforms.velocityWeight5),
+        max(0.0f, uniforms.velocityWeight6),
+        max(0.0f, uniforms.velocityWeight7),
+        max(0.0f, uniforms.velocityWeight8),
+        max(0.0f, uniforms.velocityWeight9)
+    };
+
+    const float dx = 1.0f / 9.0f;
+    float segmentAreas[9];
+    float total = 0.0f;
+    for (uint i = 0; i < 9; ++i) {
+        float area = 0.5f * (weights[i] + weights[i + 1]) * dx;
+        segmentAreas[i] = area;
+        total += area;
+    }
+    if (total <= 0.000001f) {
+        return uniforms.launchSpeed;
+    }
+
+    float target = stableRandom(id * 334214459u + 220428349u) * total;
+    float cumulative = 0.0f;
+    float normalized = 0.5f;
+    for (uint i = 0; i < 9; ++i) {
+        float segmentArea = segmentAreas[i];
+        if (segmentArea <= 0.000001f) {
+            continue;
+        }
+
+        float nextCumulative = cumulative + segmentArea;
+        if (target <= nextCumulative || i == 8) {
+            float localArea = max(0.0f, target - cumulative);
+            float w0 = weights[i];
+            float w1 = weights[i + 1];
+            float dw = w1 - w0;
+
+            float t = 0.0f;
+            if (fabs(dw) <= 0.000001f) {
+                float denom = max(0.000001f, w0 * dx);
+                t = clamp(localArea / denom, 0.0f, 1.0f);
+            } else {
+                float a = 0.5f * dw * dx;
+                float b = w0 * dx;
+                float c = -localArea;
+                float discriminant = max(0.0f, (b * b) - (4.0f * a * c));
+                float root = sqrt(discriminant);
+                float t1 = (-b + root) / (2.0f * a);
+                float t2 = (-b - root) / (2.0f * a);
+                if (t1 >= 0.0f && t1 <= 1.0f) {
+                    t = t1;
+                } else if (t2 >= 0.0f && t2 <= 1.0f) {
+                    t = t2;
+                } else {
+                    t = clamp(t1, 0.0f, 1.0f);
+                }
+            }
+
+            normalized = (float(i) + t) / 9.0f;
+            break;
+        }
+        cumulative = nextCumulative;
+    }
+
+    float minV = max(0.0f, uniforms.minVelocityRange);
+    float maxV = max(minV, uniforms.maxVelocityRange);
+    return minV + ((maxV - minV) * normalized);
 }
 
 inline float3 buildLaunchVelocity(uint id, constant Uniforms& uniforms) {
@@ -48,23 +127,35 @@ inline float3 buildLaunchVelocity(uint id, constant Uniforms& uniforms) {
     float3 bitangent = cross(axis, tangent);
 
     float3 direction = normalize(axis * cosAlpha + tangent * (cos(phi) * sinAlpha) + bitangent * (sin(phi) * sinAlpha));
+    float baseSpeed = sampledLaunchSpeed(id, uniforms);
     float speedScale = mix(1.0f, 1.0f + ((w * 2.0f) - 1.0f), velocityVariance);
-    return direction * (uniforms.launchSpeed * max(0.0f, speedScale));
+    return direction * (baseSpeed * max(0.0f, speedScale));
 }
 
 // --- Compute Shader ---
 // Updates particle physics on the GPU
 kernel void particle_compute(device Particle* particles [[buffer(BufferIndexParticles)]],
                              constant Uniforms& uniforms [[buffer(BufferIndexUniforms)]],
+                             device float3* trailHistory [[buffer(BufferIndexTrails)]],
                              uint id [[thread_position_in_grid]])
 {
     if (id >= kMaxParticleCount || id >= uniforms.particleCount) {
         return;
     }
 
+    float3 previousPosition = particles[id].position;
+
     // Simple 3D fountain physics with gravity.
     particles[id].velocity.y -= 0.0009;
     particles[id].position += particles[id].velocity;
+
+    if (uniforms.trailsEnabled != 0u && uniforms.trailSampleCount > 0u) {
+        uint base = id * kMaxTrailHistorySamples;
+        for (uint t = kMaxTrailHistorySamples - 1; t > 0; --t) {
+            trailHistory[base + t] = trailHistory[base + t - 1];
+        }
+        trailHistory[base] = previousPosition;
+    }
     
     // Use a per-particle decay rate so respawns do not line up in visible waves.
     float lifeDecay = mix(0.0035f, 0.0065f, stableRandom(id * 747796405u + 2891336453u));
@@ -82,6 +173,13 @@ kernel void particle_compute(device Particle* particles [[buffer(BufferIndexPart
          float jitterZ = (stableRandom(respawnSeed ^ 0x63D83595u) - 0.5f) * 0.01f;
          particles[id].position = float3(jitterX, 0.0f, jitterZ);
 
+         if (uniforms.trailsEnabled != 0u && uniforms.trailSampleCount > 0u) {
+             uint base = id * kMaxTrailHistorySamples;
+             for (uint t = 0; t < kMaxTrailHistorySamples; ++t) {
+                 trailHistory[base + t] = particles[id].position;
+             }
+         }
+
          particles[id].velocity = buildLaunchVelocity(id, uniforms);
          // Size will be set by the CPU based on size configuration
      }
@@ -92,19 +190,44 @@ struct ParticleVertexOutput {
     float4 position [[position]];
     float4 color;
     float pointSize [[point_size]];
+    float alphaMultiplier;
 };
 
 vertex ParticleVertexOutput particle_vertex(uint vid [[vertex_id]],
                                            const device Particle* particles [[buffer(BufferIndexParticles)]],
-                                           constant Uniforms& uniforms [[buffer(BufferIndexUniforms)]])
+                                           constant Uniforms& uniforms [[buffer(BufferIndexUniforms)]],
+                                           const device float3* trailHistory [[buffer(BufferIndexTrails)]])
 {
-    Particle p = particles[vid];
     ParticleVertexOutput out;
-    
+
+    uint trailSamples = uniforms.trailsEnabled != 0u ? min(uniforms.trailSampleCount, kMaxTrailHistorySamples) : 0u;
+    uint verticesPerParticle = trailSamples + 1u;
+    uint particleIndex = vid / verticesPerParticle;
+    uint sampleIndex = vid % verticesPerParticle;
+
+    if (particleIndex >= uniforms.particleCount) {
+        out.position = float4(2.0f, 2.0f, 2.0f, 1.0f);
+        out.color = float4(0.0f);
+        out.pointSize = 1.0f;
+        out.alphaMultiplier = 0.0f;
+        return out;
+    }
+
+    Particle p = particles[particleIndex];
+    float3 renderPosition = p.position;
+    if (sampleIndex > 0u && trailSamples > 0u) {
+        uint base = particleIndex * kMaxTrailHistorySamples;
+        uint historyIndex = min(sampleIndex - 1u, kMaxTrailHistorySamples - 1u);
+        renderPosition = trailHistory[base + historyIndex];
+    }
+
     // Convert particle position to clip space
-    out.position = uniforms.projectionMatrix * uniforms.viewMatrix * float4(p.position, 1.0);
+    out.position = uniforms.projectionMatrix * uniforms.viewMatrix * float4(renderPosition, 1.0);
     out.color = p.color;
-    out.pointSize = p.size;
+
+    float ageT = trailSamples > 0u ? (float(sampleIndex) / float(verticesPerParticle - 1u)) : 0.0f;
+    out.alphaMultiplier = mix(1.0f, 0.08f, ageT);
+    out.pointSize = max(1.0f, p.size * mix(1.0f, 0.55f, ageT));
     
     return out;
 }
@@ -120,5 +243,5 @@ fragment float4 fragmentShader(ParticleVertexOutput in [[stage_in]],
     }
 
     float edgeAlpha = smoothstep(0.5, 0.45, distanceFromCenter);
-    return float4(in.color.rgb, in.color.a * edgeAlpha);
+    return float4(in.color.rgb, in.color.a * edgeAlpha * in.alphaMultiplier);
 }

@@ -11,12 +11,16 @@ enum ConfigurationCategory: Int, CaseIterable {
     case general
     case particleColor
     case particleSize
+    case particleVelocity
+    case camera
     
     var displayName: String {
         switch self {
         case .general: return "General"
         case .particleColor: return "Particle Color"
         case .particleSize: return "Particle Size"
+        case .particleVelocity: return "Particle Velocity"
+        case .camera: return "Camera"
         }
     }
 }
@@ -40,6 +44,8 @@ class ConfigurationViewController: UIViewController {
     private var generalSettingsViewController: GeneralSettingsViewController!
     private var particleColorSettingsViewController: ParticleColorSettingsViewController!
     private var particleSizeSettingsViewController: ParticleSizeConfigViewController!
+    private var particleVelocitySettingsViewController: ParticleVelocitySettingsViewController!
+    private var cameraSettingsViewController: CameraSettingsViewController!
     
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -70,6 +76,10 @@ class ConfigurationViewController: UIViewController {
         particleColorSettingsViewController.renderer = renderer
         particleSizeSettingsViewController = ParticleSizeConfigViewController()
         particleSizeSettingsViewController.renderer = renderer
+        particleVelocitySettingsViewController = ParticleVelocitySettingsViewController()
+        particleVelocitySettingsViewController.renderer = renderer
+        cameraSettingsViewController = CameraSettingsViewController()
+        cameraSettingsViewController.renderer = renderer
         
         // Setup split view
         setupSplitView()
@@ -154,6 +164,10 @@ class ConfigurationViewController: UIViewController {
             detailVC = particleColorSettingsViewController
         case .particleSize:
             detailVC = particleSizeSettingsViewController
+        case .particleVelocity:
+            detailVC = particleVelocitySettingsViewController
+        case .camera:
+            detailVC = cameraSettingsViewController
         }
         
         addChild(detailVC)
@@ -188,6 +202,12 @@ class ConfigurationViewController: UIViewController {
         }
         if particleSizeSettingsViewController.isViewLoaded {
             particleSizeSettingsViewController.applyConfiguration()
+        }
+        if particleVelocitySettingsViewController.isViewLoaded {
+            particleVelocitySettingsViewController.applyConfiguration()
+        }
+        if cameraSettingsViewController.isViewLoaded {
+            cameraSettingsViewController.applyConfiguration()
         }
 
         dismiss(animated: true) {

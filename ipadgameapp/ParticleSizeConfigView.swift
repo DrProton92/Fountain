@@ -250,7 +250,9 @@ class ParticleSizeConfigViewController: UIViewController {
     private var constantSize: Float = 5.0
     private var minSize: Float = 5.0
     private var maxSize: Float = 30.0
+    private var sizeSpectrumVariancePercent: Float = 50.0
     private var distribution: SizeDistribution = SizeDistribution()
+    private var selectedPreset: SizeDistributionPreset = .flat
     
     private var sizeModeControl: UISegmentedControl!
     private var constantModeContainer: UIStackView!
@@ -261,6 +263,9 @@ class ParticleSizeConfigViewController: UIViewController {
     private var maxSizeSlider: UISlider!
     private var minSizeField: UITextField!
     private var maxSizeField: UITextField!
+    private var sizeVarianceSlider: UISlider!
+    private var sizeVarianceField: UITextField!
+    private var sizeVarianceContainer: UIStackView!
     private var distributionEditor: DistributionEditorView!
     private var presetButtonRow: UIStackView!
     private var presetButtons: [UIButton] = []
@@ -273,12 +278,16 @@ class ParticleSizeConfigViewController: UIViewController {
     
     override func viewDidLoad() {
         super.viewDidLoad()
+
+        let isPhone = traitCollection.userInterfaceIdiom == .phone
         
         sizeMode = renderer.particleSizeMode
         constantSize = renderer.constantParticleSize
         minSize = renderer.minSizeRange
         maxSize = renderer.maxSizeRange
+        sizeSpectrumVariancePercent = renderer.sizeSpectrumVariancePercent
         distribution = renderer.sizeDistribution
+        selectedPreset = renderer.sizeDistributionPreset
         
         view.backgroundColor = .systemBackground
         
@@ -314,9 +323,9 @@ class ParticleSizeConfigViewController: UIViewController {
         mainStack.addArrangedSubview(constantModeContainer)
 
         let constantRow = UIStackView()
-        constantRow.axis = .horizontal
+        constantRow.axis = isPhone ? .vertical : .horizontal
         constantRow.spacing = 12
-        constantRow.alignment = .center
+        constantRow.alignment = isPhone ? .fill : .center
         constantRow.translatesAutoresizingMaskIntoConstraints = false
         constantModeContainer.addArrangedSubview(constantRow)
 
@@ -324,8 +333,9 @@ class ParticleSizeConfigViewController: UIViewController {
         constantLabel.translatesAutoresizingMaskIntoConstraints = false
         constantLabel.text = "Single Size"
         constantLabel.font = .systemFont(ofSize: 13, weight: .medium)
-        constantLabel.widthAnchor.constraint(equalToConstant: 96).isActive = true
-        constantRow.addArrangedSubview(constantLabel)
+        if !isPhone {
+            constantLabel.widthAnchor.constraint(equalToConstant: 96).isActive = true
+        }
 
         constantSizeSlider = UISlider()
         constantSizeSlider.translatesAutoresizingMaskIntoConstraints = false
@@ -333,7 +343,6 @@ class ParticleSizeConfigViewController: UIViewController {
         constantSizeSlider.maximumValue = 30
         constantSizeSlider.value = constantSize
         constantSizeSlider.addTarget(self, action: #selector(constantSizeChanged), for: .valueChanged)
-        constantRow.addArrangedSubview(constantSizeSlider)
 
         constantSizeField = UITextField()
         constantSizeField.translatesAutoresizingMaskIntoConstraints = false
@@ -341,11 +350,25 @@ class ParticleSizeConfigViewController: UIViewController {
         constantSizeField.keyboardType = .decimalPad
         constantSizeField.textAlignment = .center
         constantSizeField.text = String(format: "%.1f", constantSize)
-        constantSizeField.widthAnchor.constraint(equalToConstant: 96).isActive = true
+        constantSizeField.widthAnchor.constraint(equalToConstant: 72).isActive = true
         constantSizeField.addAction(UIAction { [weak self] _ in
             self?.constantSizeEdited()
         }, for: .editingDidEnd)
-        constantRow.addArrangedSubview(constantSizeField)
+
+        if isPhone {
+            let valueRow = UIStackView()
+            valueRow.axis = .horizontal
+            valueRow.spacing = 12
+            valueRow.alignment = .center
+            valueRow.addArrangedSubview(constantSizeSlider)
+            valueRow.addArrangedSubview(constantSizeField)
+            constantRow.addArrangedSubview(constantLabel)
+            constantRow.addArrangedSubview(valueRow)
+        } else {
+            constantRow.addArrangedSubview(constantLabel)
+            constantRow.addArrangedSubview(constantSizeSlider)
+            constantRow.addArrangedSubview(constantSizeField)
+        }
         
         randomModeContainer = UIStackView()
         randomModeContainer.axis = .vertical
@@ -408,6 +431,15 @@ class ParticleSizeConfigViewController: UIViewController {
         presetButtonRow.spacing = 8
         presetButtonRow.alignment = .fill
         presetRow.addArrangedSubview(presetButtonRow)
+
+        let varianceRow = makeSliderValueRow(title: "Variance", value: sizeSpectrumVariancePercent, min: 0, max: 100, action: #selector(sizeVarianceChanged))
+        sizeVarianceSlider = varianceRow.slider
+        sizeVarianceField = varianceRow.valueField
+        sizeVarianceContainer = varianceRow.container
+        randomModeContainer.addArrangedSubview(sizeVarianceContainer)
+        sizeVarianceField.addAction(UIAction { [weak self] _ in
+            self?.sizeVarianceEdited()
+        }, for: .editingDidEnd)
 
         let orderedPresets: [SizeDistributionPreset] = [.flat, .skewedLeft, .gaussian, .skewedRight, .bigAndSmall]
         for preset in orderedPresets {
@@ -522,11 +554,32 @@ class ParticleSizeConfigViewController: UIViewController {
         maxSizeSlider.value = maxSize
         maxSizeField.text = String(format: "%.1f", maxSize)
     }
+
+    @objc private func sizeVarianceChanged() {
+        sizeSpectrumVariancePercent = sizeVarianceSlider.value
+        sizeVarianceField.text = String(format: "%.1f", sizeSpectrumVariancePercent)
+        distribution.applyPreset(selectedPreset, variancePercent: sizeSpectrumVariancePercent)
+        distributionEditor.distribution = distribution
+    }
+
+    private func sizeVarianceEdited() {
+        guard let text = sizeVarianceField.text, let value = Float(text) else {
+            sizeVarianceField.text = String(format: "%.1f", sizeSpectrumVariancePercent)
+            return
+        }
+        sizeSpectrumVariancePercent = min(max(value, 0.0), 100.0)
+        sizeVarianceSlider.value = sizeSpectrumVariancePercent
+        sizeVarianceField.text = String(format: "%.1f", sizeSpectrumVariancePercent)
+        distribution.applyPreset(selectedPreset, variancePercent: sizeSpectrumVariancePercent)
+        distributionEditor.distribution = distribution
+    }
     
     @objc private func presetTapped(_ sender: UIButton) {
         let preset = SizeDistributionPreset(rawValue: sender.tag) ?? .gaussian
-        distribution.applyPreset(preset)
+        selectedPreset = preset
+        distribution.applyPreset(preset, variancePercent: sizeSpectrumVariancePercent)
         distributionEditor.distribution = distribution
+        updateVarianceUIVisibility()
     }
 
     private func updatePresetButtonLayout() {
@@ -570,6 +623,7 @@ class ParticleSizeConfigViewController: UIViewController {
     private func updateUI() {
         constantModeContainer.isHidden = sizeMode != .constant
         randomModeContainer.isHidden = sizeMode != .random
+        updateVarianceUIVisibility()
         if sizeMode == .constant {
             constantSizeSlider.value = constantSize
             constantSizeField.text = String(format: "%.1f", constantSize)
@@ -580,16 +634,22 @@ class ParticleSizeConfigViewController: UIViewController {
             maxSizeField.text = String(format: "%.1f", maxSize)
         }
     }
+
+    private func updateVarianceUIVisibility() {
+        sizeVarianceContainer?.isHidden = (sizeMode != .random) || (selectedPreset == .flat)
+    }
     
     func applyConfiguration() {
         guard isViewLoaded else { return }
         renderer.setParticleSizeMode(sizeMode)
+        renderer.setSizeSpectrumVariance(sizeSpectrumVariancePercent)
         switch sizeMode {
         case .constant:
             renderer.setConstantParticleSize(constantSize)
         case .random:
             renderer.setSizeRange(minSize, maxSize)
             renderer.setSizeDistribution(distribution)
+            renderer.setSizeDistributionPreset(selectedPreset)
         }
     }
 
@@ -600,17 +660,20 @@ class ParticleSizeConfigViewController: UIViewController {
     }
 
     private func makeSliderValueRow(title: String, value: Float, min: Float, max: Float, action: Selector) -> SliderValueRow {
+        let isPhone = traitCollection.userInterfaceIdiom == .phone
+
         let container = UIStackView()
-        container.axis = .horizontal
+        container.axis = isPhone ? .vertical : .horizontal
         container.spacing = 12
-        container.alignment = .center
+        container.alignment = isPhone ? .fill : .center
 
         let label = UILabel()
-        label.translatesAutoresizingMaskIntoConstraints = false
         label.text = title
         label.font = .systemFont(ofSize: 13, weight: .medium)
-        label.widthAnchor.constraint(equalToConstant: 96).isActive = true
-        container.addArrangedSubview(label)
+        if !isPhone {
+            label.translatesAutoresizingMaskIntoConstraints = false
+            label.widthAnchor.constraint(equalToConstant: 96).isActive = true
+        }
 
         let newSlider = UISlider()
         newSlider.translatesAutoresizingMaskIntoConstraints = false
@@ -618,7 +681,6 @@ class ParticleSizeConfigViewController: UIViewController {
         newSlider.maximumValue = max
         newSlider.value = value
         newSlider.addTarget(self, action: action, for: .valueChanged)
-        container.addArrangedSubview(newSlider)
 
         let newValueField = UITextField()
         newValueField.translatesAutoresizingMaskIntoConstraints = false
@@ -626,8 +688,22 @@ class ParticleSizeConfigViewController: UIViewController {
         newValueField.keyboardType = .decimalPad
         newValueField.textAlignment = .center
         newValueField.text = String(format: "%.1f", value)
-        newValueField.widthAnchor.constraint(equalToConstant: 96).isActive = true
-        container.addArrangedSubview(newValueField)
+        newValueField.widthAnchor.constraint(equalToConstant: 72).isActive = true
+
+        if isPhone {
+            let valueRow = UIStackView()
+            valueRow.axis = .horizontal
+            valueRow.spacing = 12
+            valueRow.alignment = .center
+            valueRow.addArrangedSubview(newSlider)
+            valueRow.addArrangedSubview(newValueField)
+            container.addArrangedSubview(label)
+            container.addArrangedSubview(valueRow)
+        } else {
+            container.addArrangedSubview(label)
+            container.addArrangedSubview(newSlider)
+            container.addArrangedSubview(newValueField)
+        }
 
         return SliderValueRow(container: container, slider: newSlider, valueField: newValueField)
     }

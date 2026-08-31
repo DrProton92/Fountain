@@ -7,6 +7,7 @@
 
 import Metal
 import MetalKit
+import QuartzCore
 import simd
 
 // The size of our uniform structure
@@ -15,6 +16,7 @@ let maxBuffersInFlight = 3
 let maxParticleCount = 100_000_000
 let defaultParticleCount = 10000
 let preferredParticleBufferBudgetBytes = 256 * 1024 * 1024
+let maxTrailHistorySamples = 8
 
 enum RendererError: Error {
     case pipelineCreationFailed
@@ -34,9 +36,9 @@ enum ParticleColorStyle: Int, CaseIterable {
         case .singleColor: return "Single Color"
         case .rainbow: return "Rainbow"
         case .fire: return "Fire"
-        case .reddish: return "Reddish"
-        case .bluish: return "Bluish"
-        case .greenField: return "Greenish"
+        case .reddish: return "Red-ish"
+        case .bluish: return "Blue-ish"
+        case .greenField: return "Green-ish"
         case .neonNight: return "Neon Night"
         }
     }
@@ -50,6 +52,30 @@ enum ParticleSizeMode: Int, CaseIterable {
         switch self {
         case .constant: return "Single Value"
         case .random: return "Spectrum"
+        }
+    }
+}
+
+enum CameraControlMode: Int, CaseIterable {
+    case touchControlled
+    case motionModel
+
+    var displayName: String {
+        switch self {
+        case .touchControlled: return "Touch Controlled"
+        case .motionModel: return "Motion Model"
+        }
+    }
+}
+
+enum CameraMotionModel: Int, CaseIterable {
+    case orbit
+    case figureEight
+
+    var displayName: String {
+        switch self {
+        case .orbit: return "Orbit"
+        case .figureEight: return "Figure Eight"
         }
     }
 }
@@ -84,15 +110,38 @@ struct SizeDistribution {
         ]
     }
     
-    mutating func applyPreset(_ preset: SizeDistributionPreset) {
+    mutating func applyPreset(_ preset: SizeDistributionPreset, variancePercent: Float = 50.0) {
         func points(from values: [(Float, Float)]) -> [SizeDistributionPoint] {
             let raw = values.map { SizeDistributionPoint(x: $0.0, y: max(0, min($0.1, 1.0))) }
             return SizeDistribution.resample(points: raw, count: presetPointCount)
         }
 
+        let normalizedVariance = max(0.0, min(variancePercent, 100.0)) / 100.0
+        let varianceBias = (normalizedVariance - 0.5) * 2.0
+        // 50% keeps preset shape unchanged; lower broadens, higher makes it peakier.
+        let peakExponent = varianceBias >= 0
+            ? (1.0 + (varianceBias * 2.0))
+            : (1.0 + (varianceBias * 0.6))
+
+        func remapForVariance(_ x: Float) -> Float {
+            // Keep points in-bounds and monotonic while increasing center peakiness.
+            let centered = max(-1.0, min((x * 2.0) - 1.0, 1.0))
+            let magnitude = pow(abs(centered), peakExponent)
+            let signed = centered < 0 ? -magnitude : magnitude
+            return max(0.0, min(0.5 + (0.5 * signed), 1.0))
+        }
+
+        func withVariance(_ values: [(Float, Float)]) -> [(Float, Float)] {
+            values
+                .map { (x, y) in
+                    (remapForVariance(x), y)
+                }
+                .sorted { $0.0 < $1.0 }
+        }
+
         switch preset {
         case .gaussian:
-            self.controlPoints = points(from: [
+            self.controlPoints = points(from: withVariance([
                 (0.0, 0.0),
                 (0.12, 0.06),
                 (0.25, 0.28),
@@ -102,33 +151,33 @@ struct SizeDistribution {
                 (0.75, 0.28),
                 (0.88, 0.06),
                 (1.0, 0.0)
-            ])
+            ]))
         case .skewedLeft:
-            self.controlPoints = points(from: [
+            self.controlPoints = points(from: withVariance([
                 (0.0, 1.0),
                 (0.3, 0.8),
                 (0.7, 0.3),
                 (1.0, 0.0)
-            ])
+            ]))
         case .skewedRight:
-            self.controlPoints = points(from: [
+            self.controlPoints = points(from: withVariance([
                 (0.0, 0.0),
                 (0.3, 0.3),
                 (0.7, 0.8),
                 (1.0, 1.0)
-            ])
+            ]))
         case .flat:
             self.controlPoints = points(from: [
                 (0.0, 1.0),
                 (1.0, 1.0)
             ])
         case .bigAndSmall:
-            self.controlPoints = points(from: [
+            self.controlPoints = points(from: withVariance([
                 (0.0, 1.0),
                 (0.1, 0.0),
                 (0.9, 0.0),
                 (1.0, 1.0)
-            ])
+            ]))
         }
     }
 
@@ -406,14 +455,36 @@ class Renderer: NSObject, MTKViewDelegate {
     private(set) var particleSizeMode: ParticleSizeMode = .constant
     private(set) var constantParticleSize: Float = 5.0
     private(set) var sizeDistribution: SizeDistribution = SizeDistribution()
+    private(set) var sizeDistributionPreset: SizeDistributionPreset = .flat
+    private(set) var sizeSpectrumVariancePercent: Float = 50.0
     private(set) var minSizeRange: Float = 5.0
     private(set) var maxSizeRange: Float = 30.0
+
+    // Particle velocity configuration
+    private(set) var particleVelocityMode: ParticleSizeMode = .constant
+    private(set) var constantParticleVelocity: Float = 0.04
+    private(set) var velocityDistribution: SizeDistribution = SizeDistribution()
+    private(set) var velocityDistributionPreset: SizeDistributionPreset = .flat
+    private(set) var velocitySpectrumVariancePercent: Float = 50.0
+    private(set) var minVelocityRange: Float = 0.02
+    private(set) var maxVelocityRange: Float = 0.08
 
     // Launch configuration
     private(set) var launchAngleDegrees: Float = 0.0
     private(set) var angleVarianceDegrees: Float = 12.0
     private(set) var velocityVariancePercent: Float = 0.0
-    private let launchSpeed: Float = 0.04
+
+    // Trail rendering configuration
+    private(set) var trailsEnabled: Bool = false
+    private(set) var trailLength: Float = 2.0
+    private var trailHistoryBuffer: MTLBuffer?
+    private var trailHistoryCapacity: Int = 0
+
+    // Camera motion configuration
+    private(set) var cameraControlMode: CameraControlMode = .touchControlled
+    private(set) var cameraMotionModel: CameraMotionModel = .orbit
+    private(set) var cameraInclinationDegrees: Float = 22.0
+    private var cameraMotionStartTime: CFTimeInterval = CACurrentMediaTime()
     
     var projectionMatrix: matrix_float4x4 = matrix_float4x4()
     var cameraYaw: Float = 0
@@ -456,16 +527,32 @@ class Renderer: NSObject, MTKViewDelegate {
         self.particleBuffer = pBuffer
         self.maxRenderableParticleCount = allocatedCapacity
         self.activeParticleCount = min(defaultParticleCount, allocatedCapacity)
+
+        var initialSizeDistribution = SizeDistribution()
+        initialSizeDistribution.applyPreset(sizeDistributionPreset, variancePercent: sizeSpectrumVariancePercent)
+        self.sizeDistribution = initialSizeDistribution
+
+        var initialVelocityDistribution = SizeDistribution()
+        initialVelocityDistribution.applyPreset(velocityDistributionPreset, variancePercent: velocitySpectrumVariancePercent)
+        self.velocityDistribution = initialVelocityDistribution
         
         // Initialize particles using direct property assignment
         let particlesPtr = particleBuffer.contents().bindMemory(to: Particle.self, capacity: maxRenderableParticleCount)
         for i in 0..<maxRenderableParticleCount {
             particlesPtr[i].position = SIMD3<Float>(0, 0, 0)
+            let baseSpeed = Renderer.launchSpeedForParticle(
+                at: i,
+                mode: particleVelocityMode,
+                constantVelocity: constantParticleVelocity,
+                minVelocityRange: minVelocityRange,
+                maxVelocityRange: maxVelocityRange,
+                distribution: initialVelocityDistribution
+            )
             particlesPtr[i].velocity = Renderer.launchVelocity(for: i,
                                                               launchAngleDegrees: launchAngleDegrees,
                                                               angleVarianceDegrees: angleVarianceDegrees,
                                                               velocityVariancePercent: velocityVariancePercent,
-                                                              speed: launchSpeed)
+                                                              speed: baseSpeed)
             particlesPtr[i].color = Renderer.spectrumColor(for: i, count: maxRenderableParticleCount, spectrum: initialSpectrum)
             particlesPtr[i].life = Float.random(in: 0.1...1.0)
             particlesPtr[i].size = constantParticleSize
@@ -506,8 +593,27 @@ class Renderer: NSObject, MTKViewDelegate {
         frameUniforms.particleCount = UInt32(activeParticleCount)
         frameUniforms.launchAngleRadians = radians_from_degrees(launchAngleDegrees)
         frameUniforms.angleVarianceRadians = radians_from_degrees(angleVarianceDegrees)
-        frameUniforms.launchSpeed = launchSpeed
+        frameUniforms.launchSpeed = constantParticleVelocity
         frameUniforms.velocityVariance = max(0.0, min(velocityVariancePercent, 100.0)) / 100.0
+        let requestedTrailSamples = Int(round(max(1.0, min(trailLength, Float(maxTrailHistorySamples)))))
+        let hasTrailHistory = trailHistoryBuffer != nil && trailHistoryCapacity >= activeParticleCount
+        let effectiveTrailsEnabled = trailsEnabled && hasTrailHistory
+        frameUniforms.trailsEnabled = effectiveTrailsEnabled ? 1 : 0
+        frameUniforms.trailSampleCount = UInt32(effectiveTrailsEnabled ? requestedTrailSamples : 0)
+        frameUniforms.velocityMode = UInt32(particleVelocityMode.rawValue)
+        frameUniforms.minVelocityRange = minVelocityRange
+        frameUniforms.maxVelocityRange = maxVelocityRange
+        let velocityWeights = resampledWeights(from: velocityDistribution)
+        frameUniforms.velocityWeight0 = velocityWeights[0]
+        frameUniforms.velocityWeight1 = velocityWeights[1]
+        frameUniforms.velocityWeight2 = velocityWeights[2]
+        frameUniforms.velocityWeight3 = velocityWeights[3]
+        frameUniforms.velocityWeight4 = velocityWeights[4]
+        frameUniforms.velocityWeight5 = velocityWeights[5]
+        frameUniforms.velocityWeight6 = velocityWeights[6]
+        frameUniforms.velocityWeight7 = velocityWeights[7]
+        frameUniforms.velocityWeight8 = velocityWeights[8]
+        frameUniforms.velocityWeight9 = velocityWeights[9]
 
         // Write one frame's uniforms into the ring-buffer slot.
         let destination = uniformBufferRawPointer.advanced(by: uniformBufferOffset)
@@ -537,6 +643,7 @@ class Renderer: NSObject, MTKViewDelegate {
             // Use the integer indices directly to avoid C enum name-mapping issues.
             computeEncoder.setBuffer(particleBuffer, offset: 0, index: 0) // BufferIndexParticles
             computeEncoder.setBuffer(dynamicUniformBuffer, offset: uniformBufferOffset, index: 1) // BufferIndexUniforms
+            computeEncoder.setBuffer(trailHistoryBuffer, offset: 0, index: 2) // BufferIndexTrails
             
             let threadsPerGroup = MTLSize(width: 64, height: 1, depth: 1)
             let threadgroups = MTLSize(
@@ -559,8 +666,13 @@ class Renderer: NSObject, MTKViewDelegate {
             renderEncoder.setRenderPipelineState(renderPipelineState)
             renderEncoder.setVertexBuffer(particleBuffer, offset: 0, index: 0)
             renderEncoder.setVertexBuffer(dynamicUniformBuffer, offset: uniformBufferOffset, index: 1) // BufferIndexUniforms
+            renderEncoder.setVertexBuffer(trailHistoryBuffer, offset: 0, index: 2) // BufferIndexTrails
             
-        renderEncoder.drawPrimitives(type: .point, vertexStart: 0, vertexCount: activeParticleCount)
+        let trailSamples = (trailsEnabled && trailHistoryBuffer != nil && trailHistoryCapacity >= activeParticleCount)
+            ? Int(round(max(1.0, min(trailLength, Float(maxTrailHistorySamples)))))
+            : 0
+        let vertexCount = activeParticleCount * (trailSamples + 1)
+        renderEncoder.drawPrimitives(type: .point, vertexStart: 0, vertexCount: vertexCount)
         renderEncoder.endEncoding()
         commandBuffer.present(drawable)
         
@@ -568,6 +680,7 @@ class Renderer: NSObject, MTKViewDelegate {
     }
 
     func updateCameraRotation(deltaX: Float, deltaY: Float) {
+        guard cameraControlMode == .touchControlled else { return }
         let sensitivity: Float = 0.01
         cameraYaw += deltaX * sensitivity
         cameraPitch += deltaY * sensitivity
@@ -575,6 +688,7 @@ class Renderer: NSObject, MTKViewDelegate {
     }
 
     func updateCameraZoom(scaleFactor: Float) {
+        guard cameraControlMode == .touchControlled else { return }
         // scaleFactor is the delta scale from the last frame
         // > 1.0 means spreading/zooming in, < 1.0 means pinching/zooming out
         // Apply the scale factor to the distance
@@ -582,9 +696,77 @@ class Renderer: NSObject, MTKViewDelegate {
         cameraDistance = min(max(newDistance, 1.5), 12.0)
     }
 
+    func setCameraControlMode(_ mode: CameraControlMode) {
+        cameraControlMode = mode
+        if mode == .motionModel {
+            cameraMotionStartTime = CACurrentMediaTime()
+        }
+    }
+
+    func setCameraMotionModel(_ model: CameraMotionModel) {
+        cameraMotionModel = model
+        cameraMotionStartTime = CACurrentMediaTime()
+    }
+
+    func setCameraInclination(_ degrees: Float) {
+        cameraInclinationDegrees = max(0.0, min(degrees, 85.0))
+    }
+
+    func setParticleVelocityMode(_ mode: ParticleSizeMode) {
+        particleVelocityMode = mode
+        regenerateParticleLaunchVelocities()
+    }
+
+    func setConstantParticleVelocity(_ velocity: Float) {
+        constantParticleVelocity = max(0.005, min(velocity, 0.20))
+        if particleVelocityMode == .constant {
+            regenerateParticleLaunchVelocities()
+        }
+    }
+
+    func setVelocityRange(_ minValue: Float, _ maxValue: Float) {
+        let minClamped = max(0.005, min(minValue, 0.20))
+        let maxClamped = max(0.005, min(maxValue, 0.20))
+        minVelocityRange = min(minClamped, maxClamped)
+        maxVelocityRange = max(minClamped, maxClamped)
+        if particleVelocityMode == .random {
+            regenerateParticleLaunchVelocities()
+        }
+    }
+
+    func setVelocityDistribution(_ distribution: SizeDistribution) {
+        velocityDistribution = distribution
+        if particleVelocityMode == .random {
+            regenerateParticleLaunchVelocities()
+        }
+    }
+
+    func applyVelocityDistributionPreset(_ preset: SizeDistributionPreset) {
+        velocityDistributionPreset = preset
+        velocityDistribution.applyPreset(preset, variancePercent: velocitySpectrumVariancePercent)
+        if particleVelocityMode == .random {
+            regenerateParticleLaunchVelocities()
+        }
+    }
+
+    func setVelocityDistributionPreset(_ preset: SizeDistributionPreset) {
+        velocityDistributionPreset = preset
+    }
+
+    func setVelocitySpectrumVariance(_ percent: Float) {
+        velocitySpectrumVariancePercent = max(0.0, min(percent, 100.0))
+        velocityDistribution.applyPreset(velocityDistributionPreset, variancePercent: velocitySpectrumVariancePercent)
+        if particleVelocityMode == .random {
+            regenerateParticleLaunchVelocities()
+        }
+    }
+
     func setParticleCount(_ count: Int) {
         let clamped = min(max(count, 1), maxRenderableParticleCount)
          activeParticleCount = clamped
+         if trailsEnabled && !ensureTrailHistoryCapacity(requiredCount: activeParticleCount) {
+             trailsEnabled = false
+         }
          applyColorStyle(in: 0..<activeParticleCount)
          regenerateParticleSizes()  // Assign sizes to new particles
          regenerateParticleLaunchVelocities()
@@ -632,7 +814,20 @@ class Renderer: NSObject, MTKViewDelegate {
     }
 
     func applySizeDistributionPreset(_ preset: SizeDistributionPreset) {
-        sizeDistribution.applyPreset(preset)
+        sizeDistributionPreset = preset
+        sizeDistribution.applyPreset(preset, variancePercent: sizeSpectrumVariancePercent)
+        if particleSizeMode == .random {
+            regenerateParticleSizes()
+        }
+    }
+
+    func setSizeDistributionPreset(_ preset: SizeDistributionPreset) {
+        sizeDistributionPreset = preset
+    }
+
+    func setSizeSpectrumVariance(_ percent: Float) {
+        sizeSpectrumVariancePercent = max(0.0, min(percent, 100.0))
+        sizeDistribution.applyPreset(sizeDistributionPreset, variancePercent: sizeSpectrumVariancePercent)
         if particleSizeMode == .random {
             regenerateParticleSizes()
         }
@@ -663,15 +858,155 @@ class Renderer: NSObject, MTKViewDelegate {
         regenerateParticleLaunchVelocities()
     }
 
+    func setTrailsEnabled(_ enabled: Bool) {
+        if enabled {
+            trailsEnabled = ensureTrailHistoryCapacity(requiredCount: activeParticleCount)
+        } else {
+            trailsEnabled = false
+        }
+    }
+
+    func setTrailLength(_ length: Float) {
+        trailLength = max(1.0, min(length, Float(maxTrailHistorySamples)))
+    }
+
+    private func ensureTrailHistoryCapacity(requiredCount: Int) -> Bool {
+        guard requiredCount > 0 else { return true }
+        if let _ = trailHistoryBuffer, trailHistoryCapacity >= requiredCount {
+            return true
+        }
+
+        let stride = MemoryLayout<SIMD3<Float>>.stride
+        let requiredLength = requiredCount * maxTrailHistorySamples * stride
+        guard let buffer = device.makeBuffer(length: requiredLength, options: .storageModeShared) else {
+            return false
+        }
+
+        let trailPtr = buffer.contents().bindMemory(to: SIMD3<Float>.self,
+                                                    capacity: requiredCount * maxTrailHistorySamples)
+        let particlePtr = particleBuffer.contents().bindMemory(to: Particle.self, capacity: maxRenderableParticleCount)
+        for particleIndex in 0..<requiredCount {
+            let base = particleIndex * maxTrailHistorySamples
+            let position = particlePtr[particleIndex].position
+            for sample in 0..<maxTrailHistorySamples {
+                trailPtr[base + sample] = position
+            }
+        }
+
+        trailHistoryBuffer = buffer
+        trailHistoryCapacity = requiredCount
+        return true
+    }
+
     private func regenerateParticleLaunchVelocities() {
         let particlesPtr = particleBuffer.contents().bindMemory(to: Particle.self, capacity: maxRenderableParticleCount)
         for i in 0..<activeParticleCount {
+            let baseSpeed = launchSpeedForParticle(at: i)
             particlesPtr[i].velocity = Renderer.launchVelocity(for: i,
                                                                launchAngleDegrees: launchAngleDegrees,
                                                                angleVarianceDegrees: angleVarianceDegrees,
                                                                velocityVariancePercent: velocityVariancePercent,
-                                                               speed: launchSpeed)
+                                                               speed: baseSpeed)
         }
+    }
+
+    private func launchSpeedForParticle(at index: Int) -> Float {
+        Renderer.launchSpeedForParticle(
+            at: index,
+            mode: particleVelocityMode,
+            constantVelocity: constantParticleVelocity,
+            minVelocityRange: minVelocityRange,
+            maxVelocityRange: maxVelocityRange,
+            distribution: velocityDistribution
+        )
+    }
+
+    private static func launchSpeedForParticle(at index: Int,
+                                               mode: ParticleSizeMode,
+                                               constantVelocity: Float,
+                                               minVelocityRange: Float,
+                                               maxVelocityRange: Float,
+                                               distribution: SizeDistribution) -> Float {
+        switch mode {
+        case .constant:
+            return constantVelocity
+        case .random:
+            let randomValue = Renderer.stableUnitRandom(for: index &* 2654435761)
+            let weights = SizeDistribution.resample(points: distribution.controlPoints, count: 10)
+                .map { max(0.0, min($0.y, 1.0)) }
+            let normalized = Renderer.weightedPositionFromUniformWeights(for: randomValue, weights: weights)
+            return minVelocityRange + ((maxVelocityRange - minVelocityRange) * normalized)
+        }
+    }
+
+    private static func weightedPositionFromUniformWeights(for unitRandom: Float, weights: [Float]) -> Float {
+        guard weights.count >= 2 else { return max(0, min(unitRandom, 1.0)) }
+
+        let epsilon: Float = 0.000001
+        let clampedRandom = max(0, min(unitRandom, 1.0))
+        let dx: Float = 1.0 / Float(weights.count - 1)
+
+        var segmentAreas: [Float] = []
+        segmentAreas.reserveCapacity(weights.count - 1)
+        var totalArea: Float = 0
+
+        for i in 0..<(weights.count - 1) {
+            let w0 = max(0, weights[i])
+            let w1 = max(0, weights[i + 1])
+            let area = 0.5 * (w0 + w1) * dx
+            segmentAreas.append(area)
+            totalArea += area
+        }
+
+        guard totalArea > epsilon else { return clampedRandom }
+
+        let targetArea = clampedRandom * totalArea
+        var accumulated: Float = 0
+
+        for i in 0..<(weights.count - 1) {
+            let segmentArea = segmentAreas[i]
+            if segmentArea <= epsilon { continue }
+
+            let nextAccumulated = accumulated + segmentArea
+            if targetArea <= nextAccumulated || i == weights.count - 2 {
+                let w0 = max(0, weights[i])
+                let w1 = max(0, weights[i + 1])
+                let dw = w1 - w0
+                let localArea = max(0, targetArea - accumulated)
+
+                let t: Float
+                if abs(dw) <= epsilon {
+                    let denom = max(epsilon, w0 * dx)
+                    t = max(0, min(localArea / denom, 1.0))
+                } else {
+                    let a = 0.5 * dw * dx
+                    let b = w0 * dx
+                    let c = -localArea
+                    let discriminant = max(0, (b * b) - (4 * a * c))
+                    let sqrtDiscriminant = sqrt(discriminant)
+                    let t1 = (-b + sqrtDiscriminant) / (2 * a)
+                    let t2 = (-b - sqrtDiscriminant) / (2 * a)
+                    if (0.0...1.0).contains(t1) {
+                        t = t1
+                    } else if (0.0...1.0).contains(t2) {
+                        t = t2
+                    } else {
+                        t = max(0, min(t1, 1.0))
+                    }
+                }
+
+                return (Float(i) + t) / Float(weights.count - 1)
+            }
+
+            accumulated = nextAccumulated
+        }
+
+        return 1.0
+    }
+
+    private func resampledWeights(from distribution: SizeDistribution) -> [Float] {
+        let points = SizeDistribution.resample(points: distribution.controlPoints, count: 10)
+        return points.map { max(0.0, min($0.y, 1.0)) }
     }
 
     private func regenerateParticleSizes() {
@@ -694,22 +1029,76 @@ class Renderer: NSObject, MTKViewDelegate {
 
     private static func weightedSizePosition(for unitRandom: Float, distribution: SizeDistribution) -> Float {
         let points = distribution.controlPoints.sorted { $0.x < $1.x }
-        guard !points.isEmpty else { return max(0, min(unitRandom, 1.0)) }
+        guard points.count > 1 else { return max(0, min(unitRandom, 1.0)) }
 
-        let weights = points.map { max(0, $0.y) }
-        let totalWeight = weights.reduce(0, +)
-        guard totalWeight > 0.000001 else { return max(0, min(unitRandom, 1.0)) }
+        let epsilon: Float = 0.000001
+        let clampedRandom = max(0, min(unitRandom, 1.0))
 
-        let target = max(0, min(unitRandom, 1.0)) * totalWeight
-        var cumulative: Float = 0
-        for i in 0..<points.count {
-            cumulative += weights[i]
-            if target <= cumulative || i == points.count - 1 {
-                return points[i].x
-            }
+        // Treat control-point heights as a piecewise-linear PDF and invert its CDF.
+        var segmentAreas: [Float] = []
+        segmentAreas.reserveCapacity(points.count - 1)
+        var totalArea: Float = 0
+
+        for i in 0..<(points.count - 1) {
+            let x0 = points[i].x
+            let x1 = points[i + 1].x
+            let dx = max(0, x1 - x0)
+            let w0 = max(0, points[i].y)
+            let w1 = max(0, points[i + 1].y)
+            let area = 0.5 * (w0 + w1) * dx
+            segmentAreas.append(area)
+            totalArea += area
         }
 
-        return points.last?.x ?? 0.5
+        guard totalArea > epsilon else { return clampedRandom }
+
+        let targetArea = clampedRandom * totalArea
+        var accumulated: Float = 0
+
+        for i in 0..<(points.count - 1) {
+            let segmentArea = segmentAreas[i]
+            if segmentArea <= epsilon {
+                continue
+            }
+
+            let nextAccumulated = accumulated + segmentArea
+            if targetArea <= nextAccumulated || i == points.count - 2 {
+                let x0 = points[i].x
+                let x1 = points[i + 1].x
+                let dx = max(epsilon, x1 - x0)
+                let w0 = max(0, points[i].y)
+                let w1 = max(0, points[i + 1].y)
+                let dw = w1 - w0
+                let localArea = max(0, targetArea - accumulated)
+
+                let t: Float
+                if abs(dw) <= epsilon {
+                    let denom = max(epsilon, w0 * dx)
+                    t = max(0, min(localArea / denom, 1.0))
+                } else {
+                    let a = 0.5 * dw * dx
+                    let b = w0 * dx
+                    let c = -localArea
+                    let discriminant = max(0, (b * b) - (4 * a * c))
+                    let sqrtDiscriminant = sqrt(discriminant)
+                    let t1 = (-b + sqrtDiscriminant) / (2 * a)
+                    let t2 = (-b - sqrtDiscriminant) / (2 * a)
+                    if (0.0...1.0).contains(t1) {
+                        t = t1
+                    } else if (0.0...1.0).contains(t2) {
+                        t = t2
+                    } else {
+                        t = max(0, min(t1, 1.0))
+                    }
+                }
+
+                return x0 + ((x1 - x0) * t)
+            }
+
+            accumulated = nextAccumulated
+        }
+
+        return points.last?.x ?? 1.0
     }
 
     private static func stableUnitRandom(for index: Int) -> Float {
@@ -750,12 +1139,39 @@ class Renderer: NSObject, MTKViewDelegate {
     }
 
     private func makeViewMatrix() -> matrix_float4x4 {
-        // Orbit the camera around the origin and always look back at the fountain source.
         let target = SIMD3<Float>(0, 0, 0)
-        let x = cameraDistance * cos(cameraPitch) * sin(cameraYaw)
-        let y = cameraDistance * sin(cameraPitch)
-        let z = cameraDistance * cos(cameraPitch) * cos(cameraYaw)
-        let eye = SIMD3<Float>(x, y, z)
+        let eye: SIMD3<Float>
+
+        switch cameraControlMode {
+        case .touchControlled:
+            let x = cameraDistance * cos(cameraPitch) * sin(cameraYaw)
+            let y = cameraDistance * sin(cameraPitch)
+            let z = cameraDistance * cos(cameraPitch) * cos(cameraYaw)
+            eye = SIMD3<Float>(x, y, z)
+        case .motionModel:
+            let elapsed = Float(CACurrentMediaTime() - cameraMotionStartTime)
+            let radius = max(1.0, cameraDistance)
+            let inclination = radians_from_degrees(max(0.0, min(cameraInclinationDegrees, 85.0)))
+            let planarRadius = max(0.05, radius * cos(inclination))
+            let baseY = radius * sin(inclination)
+            switch cameraMotionModel {
+            case .orbit:
+                let angle = elapsed * 0.45
+                eye = SIMD3<Float>(
+                    planarRadius * sin(angle),
+                    baseY,
+                    planarRadius * cos(angle)
+                )
+            case .figureEight:
+                let angle = elapsed * 0.55
+                eye = SIMD3<Float>(
+                    planarRadius * sin(angle),
+                    baseY + (0.10 * planarRadius * cos(angle)),
+                    0.5 * planarRadius * sin(2 * angle)
+                )
+            }
+        }
+
         return matrix_look_at_right_hand(eye: eye, target: target, up: SIMD3<Float>(0, 1, 0))
     }
 

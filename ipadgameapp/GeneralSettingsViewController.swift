@@ -14,7 +14,8 @@ final class GeneralSettingsViewController: UIViewController {
     private let minParticleCount = 100
     private var launchAngleDegrees: Float = 0.0
     private var angleVarianceDegrees: Float = 12.0
-    private var velocityVariancePercent: Float = 0.0
+    private var trailsEnabled: Bool = false
+    private var trailLength: Float = 2.0
 
     private var countSlider: UISlider!
     private var countField: UITextField!
@@ -22,8 +23,10 @@ final class GeneralSettingsViewController: UIViewController {
     private var launchAngleField: UITextField!
     private var angleVarianceSlider: UISlider!
     private var angleVarianceField: UITextField!
-    private var velocityVarianceSlider: UISlider!
-    private var velocityVarianceField: UITextField!
+    private var trailsSwitch: UISwitch!
+    private var trailLengthRowContainer: UIStackView!
+    private var trailLengthSlider: UISlider!
+    private var trailLengthField: UITextField!
     
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -31,7 +34,8 @@ final class GeneralSettingsViewController: UIViewController {
         particleCount = renderer.activeParticleCount
         launchAngleDegrees = renderer.launchAngleDegrees
         angleVarianceDegrees = renderer.angleVarianceDegrees
-        velocityVariancePercent = renderer.velocityVariancePercent
+        trailsEnabled = renderer.trailsEnabled
+        trailLength = renderer.trailLength
         view.backgroundColor = .systemBackground
         
         let scrollView = UIScrollView()
@@ -75,10 +79,31 @@ final class GeneralSettingsViewController: UIViewController {
         angleVarianceField = coneRow.field
         mainStack.addArrangedSubview(coneRow.container)
 
-        let velocityRow = makeSliderValueRow(title: "Velocity Variance", value: velocityVariancePercent, min: 0, max: 100, isLogSlider: false)
-        velocityVarianceSlider = velocityRow.slider
-        velocityVarianceField = velocityRow.field
-        mainStack.addArrangedSubview(velocityRow.container)
+        let trailsLabel = UILabel()
+        trailsLabel.text = "Trails"
+        trailsLabel.font = .boldSystemFont(ofSize: 16)
+        mainStack.addArrangedSubview(trailsLabel)
+
+        let trailsToggleRow = UIStackView()
+        trailsToggleRow.axis = .horizontal
+        trailsToggleRow.spacing = 12
+        trailsToggleRow.alignment = .center
+        let trailsToggleLabel = UILabel()
+        trailsToggleLabel.text = "Enable Trails"
+        trailsToggleLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        trailsSwitch = UISwitch()
+        trailsSwitch.isOn = trailsEnabled
+        trailsToggleRow.addArrangedSubview(trailsToggleLabel)
+        trailsToggleRow.addArrangedSubview(UIView())
+        trailsToggleRow.addArrangedSubview(trailsSwitch)
+        mainStack.addArrangedSubview(trailsToggleRow)
+
+        let trailLengthRow = makeSliderValueRow(title: "Trail Length", value: trailLength, min: 1, max: Float(maxTrailHistorySamples), isLogSlider: false)
+        trailLengthRowContainer = trailLengthRow.container
+        trailLengthSlider = trailLengthRow.slider
+        trailLengthField = trailLengthRow.field
+        mainStack.addArrangedSubview(trailLengthRowContainer)
+        trailLengthRowContainer.isHidden = !trailsEnabled
 
         wireEvents()
 
@@ -105,7 +130,8 @@ final class GeneralSettingsViewController: UIViewController {
         renderer.setParticleCount(particleCount)
         renderer.setLaunchAngle(launchAngleDegrees)
         renderer.setAngleVariance(angleVarianceDegrees)
-        renderer.setVelocityVariance(velocityVariancePercent)
+        renderer.setTrailsEnabled(trailsEnabled)
+        renderer.setTrailLength(trailLength)
     }
 
     private func wireEvents() {
@@ -152,17 +178,35 @@ final class GeneralSettingsViewController: UIViewController {
             self.angleVarianceSlider.value = self.angleVarianceDegrees
         }, for: .editingDidEnd)
 
-        velocityVarianceSlider.addAction(UIAction { [weak self] _ in
+        trailsSwitch.addAction(UIAction { [weak self] _ in
             guard let self else { return }
-            self.velocityVariancePercent = self.velocityVarianceSlider.value
-            self.velocityVarianceField.text = String(format: "%.1f", self.velocityVariancePercent)
+            self.trailsEnabled = self.trailsSwitch.isOn
+            self.trailLengthRowContainer.isHidden = !self.trailsEnabled
         }, for: .valueChanged)
 
-        velocityVarianceField.addAction(UIAction { [weak self] _ in
+        trailLengthSlider.addAction(UIAction { [weak self] _ in
             guard let self else { return }
-            self.velocityVariancePercent = self.sanitizePercentField(self.velocityVarianceField, fallback: self.velocityVariancePercent)
-            self.velocityVarianceSlider.value = self.velocityVariancePercent
+            self.trailLength = round(self.trailLengthSlider.value)
+            self.trailLengthSlider.value = self.trailLength
+            self.trailLengthField.text = String(format: "%.1f", self.trailLength)
+        }, for: .valueChanged)
+
+        trailLengthField.addAction(UIAction { [weak self] _ in
+            guard let self else { return }
+            self.trailLength = self.sanitizeTrailLengthField(self.trailLengthField, fallback: self.trailLength)
+            self.trailLengthSlider.value = self.trailLength
         }, for: .editingDidEnd)
+
+    }
+
+    private func sanitizeTrailLengthField(_ field: UITextField, fallback: Float) -> Float {
+        guard let text = field.text, let value = Float(text) else {
+            field.text = String(format: "%.1f", fallback)
+            return fallback
+        }
+        let clamped = round(max(1.0, min(value, Float(maxTrailHistorySamples))))
+        field.text = String(format: "%.1f", clamped)
+        return clamped
     }
 
     private func sanitizeAngleField(_ field: UITextField, fallback: Float) -> Float {
@@ -175,16 +219,6 @@ final class GeneralSettingsViewController: UIViewController {
         return clamped
     }
 
-    private func sanitizePercentField(_ field: UITextField, fallback: Float) -> Float {
-        guard let text = field.text, let value = Float(text) else {
-            field.text = String(format: "%.1f", fallback)
-            return fallback
-        }
-        let clamped = max(0.0, min(value, 100.0))
-        field.text = String(format: "%.1f", clamped)
-        return clamped
-    }
-
     private struct SliderValueRow {
         let container: UIStackView
         let slider: UISlider
@@ -192,17 +226,20 @@ final class GeneralSettingsViewController: UIViewController {
     }
 
     private func makeSliderValueRow(title: String, value: Float, min: Float, max: Float, isLogSlider: Bool) -> SliderValueRow {
+        let isPhone = traitCollection.userInterfaceIdiom == .phone
+
         let row = UIStackView()
-        row.axis = .horizontal
+        row.axis = isPhone ? .vertical : .horizontal
         row.spacing = 12
-        row.alignment = .center
+        row.alignment = isPhone ? .fill : .center
 
         let label = UILabel()
         label.text = title
         label.font = .systemFont(ofSize: 13, weight: .medium)
-        label.translatesAutoresizingMaskIntoConstraints = false
-        label.widthAnchor.constraint(equalToConstant: 120).isActive = true
-        row.addArrangedSubview(label)
+        if !isPhone {
+            label.translatesAutoresizingMaskIntoConstraints = false
+            label.widthAnchor.constraint(equalToConstant: 120).isActive = true
+        }
 
         let slider = UISlider()
         slider.minimumValue = min
@@ -210,7 +247,6 @@ final class GeneralSettingsViewController: UIViewController {
         slider.value = value
         slider.translatesAutoresizingMaskIntoConstraints = false
         slider.heightAnchor.constraint(equalToConstant: 31).isActive = true
-        row.addArrangedSubview(slider)
 
         let field = UITextField()
         field.borderStyle = .roundedRect
@@ -218,8 +254,22 @@ final class GeneralSettingsViewController: UIViewController {
         field.textAlignment = .center
         field.text = isLogSlider ? "\(Int(value))" : String(format: "%.1f", value)
         field.translatesAutoresizingMaskIntoConstraints = false
-        field.widthAnchor.constraint(equalToConstant: 96).isActive = true
-        row.addArrangedSubview(field)
+        field.widthAnchor.constraint(equalToConstant: 72).isActive = true
+
+        if isPhone {
+            let valueRow = UIStackView()
+            valueRow.axis = .horizontal
+            valueRow.spacing = 12
+            valueRow.alignment = .center
+            valueRow.addArrangedSubview(slider)
+            valueRow.addArrangedSubview(field)
+            row.addArrangedSubview(label)
+            row.addArrangedSubview(valueRow)
+        } else {
+            row.addArrangedSubview(label)
+            row.addArrangedSubview(slider)
+            row.addArrangedSubview(field)
+        }
 
         return SliderValueRow(container: row, slider: slider, field: field)
     }
