@@ -7,7 +7,7 @@
 
 import UIKit
 
-/// A custom view for graphically editing particle size distribution
+/// A custom view for graphically editing particle size or velocity distribution
 class DistributionEditorView: UIView {
     
     var distribution: SizeDistribution {

@@ -461,10 +461,10 @@ class Renderer: NSObject, MTKViewDelegate {
     private(set) var maxSizeRange: Float = 30.0
 
     // Particle velocity configuration
-    private(set) var particleVelocityMode: ParticleSizeMode = .constant
+    private(set) var particleVelocityMode: ParticleSizeMode = .random
     private(set) var constantParticleVelocity: Float = 0.04
     private(set) var velocityDistribution: SizeDistribution = SizeDistribution()
-    private(set) var velocityDistributionPreset: SizeDistributionPreset = .flat
+    private(set) var velocityDistributionPreset: SizeDistributionPreset = .gaussian
     private(set) var velocitySpectrumVariancePercent: Float = 50.0
     private(set) var minVelocityRange: Float = 0.02
     private(set) var maxVelocityRange: Float = 0.08
@@ -479,6 +479,7 @@ class Renderer: NSObject, MTKViewDelegate {
     private(set) var trailLength: Float = 2.0
     private var trailHistoryBuffer: MTLBuffer?
     private var trailHistoryCapacity: Int = 0
+    private let fallbackTrailHistoryBuffer: MTLBuffer
 
     // Camera motion configuration
     private(set) var cameraControlMode: CameraControlMode = .touchControlled
@@ -497,6 +498,9 @@ class Renderer: NSObject, MTKViewDelegate {
         self.device = device
         guard let queue = self.device.makeCommandQueue() else { return nil }
         self.commandQueue = queue
+        let fallbackTrailLength = max(1, MemoryLayout<SIMD3<Float>>.stride)
+        guard let fallbackTrailBuffer = self.device.makeBuffer(length: fallbackTrailLength, options: .storageModeShared) else { return nil }
+        self.fallbackTrailHistoryBuffer = fallbackTrailBuffer
         
         // 1. Setup Uniform Buffer
         let uniformBufferSize = alignedUniformsSize * maxBuffersInFlight
@@ -536,9 +540,9 @@ class Renderer: NSObject, MTKViewDelegate {
         initialVelocityDistribution.applyPreset(velocityDistributionPreset, variancePercent: velocitySpectrumVariancePercent)
         self.velocityDistribution = initialVelocityDistribution
         
-        // Initialize particles using direct property assignment
+        // Initialize active particles without using self methods before super.init.
         let particlesPtr = particleBuffer.contents().bindMemory(to: Particle.self, capacity: maxRenderableParticleCount)
-        for i in 0..<maxRenderableParticleCount {
+        for i in 0..<activeParticleCount {
             particlesPtr[i].position = SIMD3<Float>(0, 0, 0)
             let baseSpeed = Renderer.launchSpeedForParticle(
                 at: i,
@@ -553,7 +557,9 @@ class Renderer: NSObject, MTKViewDelegate {
                                                               angleVarianceDegrees: angleVarianceDegrees,
                                                               velocityVariancePercent: velocityVariancePercent,
                                                               speed: baseSpeed)
-            particlesPtr[i].color = Renderer.spectrumColor(for: i, count: maxRenderableParticleCount, spectrum: initialSpectrum)
+            particlesPtr[i].color = Renderer.spectrumColor(for: i,
+                                                           count: maxRenderableParticleCount,
+                                                           spectrum: initialSpectrum)
             particlesPtr[i].life = Float.random(in: 0.1...1.0)
             particlesPtr[i].size = constantParticleSize
         }
@@ -643,7 +649,7 @@ class Renderer: NSObject, MTKViewDelegate {
             // Use the integer indices directly to avoid C enum name-mapping issues.
             computeEncoder.setBuffer(particleBuffer, offset: 0, index: 0) // BufferIndexParticles
             computeEncoder.setBuffer(dynamicUniformBuffer, offset: uniformBufferOffset, index: 1) // BufferIndexUniforms
-            computeEncoder.setBuffer(trailHistoryBuffer, offset: 0, index: 2) // BufferIndexTrails
+            computeEncoder.setBuffer(trailHistoryBuffer ?? fallbackTrailHistoryBuffer, offset: 0, index: 2) // BufferIndexTrails
             
             let threadsPerGroup = MTLSize(width: 64, height: 1, depth: 1)
             let threadgroups = MTLSize(
@@ -666,7 +672,7 @@ class Renderer: NSObject, MTKViewDelegate {
             renderEncoder.setRenderPipelineState(renderPipelineState)
             renderEncoder.setVertexBuffer(particleBuffer, offset: 0, index: 0)
             renderEncoder.setVertexBuffer(dynamicUniformBuffer, offset: uniformBufferOffset, index: 1) // BufferIndexUniforms
-            renderEncoder.setVertexBuffer(trailHistoryBuffer, offset: 0, index: 2) // BufferIndexTrails
+            renderEncoder.setVertexBuffer(trailHistoryBuffer ?? fallbackTrailHistoryBuffer, offset: 0, index: 2) // BufferIndexTrails
             
         let trailSamples = (trailsEnabled && trailHistoryBuffer != nil && trailHistoryCapacity >= activeParticleCount)
             ? Int(round(max(1.0, min(trailLength, Float(maxTrailHistorySamples)))))
@@ -762,7 +768,11 @@ class Renderer: NSObject, MTKViewDelegate {
     }
 
     func setParticleCount(_ count: Int) {
+        let previousCount = activeParticleCount
         let clamped = min(max(count, 1), maxRenderableParticleCount)
+         if clamped > previousCount {
+             initializeParticles(in: previousCount..<clamped)
+         }
          activeParticleCount = clamped
          if trailsEnabled && !ensureTrailHistoryCapacity(requiredCount: activeParticleCount) {
              trailsEnabled = false
@@ -921,6 +931,39 @@ class Renderer: NSObject, MTKViewDelegate {
         )
     }
 
+    private func initializeParticles(in range: Range<Int>,
+                                     spectrum: ColorSpectrum? = nil,
+                                     velocityDistribution: SizeDistribution? = nil) {
+        guard !range.isEmpty else { return }
+        let lower = max(0, range.lowerBound)
+        let upper = min(range.upperBound, maxRenderableParticleCount)
+        guard lower < upper else { return }
+
+        let particlesPtr = particleBuffer.contents().bindMemory(to: Particle.self, capacity: maxRenderableParticleCount)
+        let colorSource = spectrum ?? colorSpectrum
+        let velocitySource = velocityDistribution ?? self.velocityDistribution
+
+        for i in lower..<upper {
+            particlesPtr[i].position = SIMD3<Float>(0, 0, 0)
+            let baseSpeed = Renderer.launchSpeedForParticle(
+                at: i,
+                mode: particleVelocityMode,
+                constantVelocity: constantParticleVelocity,
+                minVelocityRange: minVelocityRange,
+                maxVelocityRange: maxVelocityRange,
+                distribution: velocitySource
+            )
+            particlesPtr[i].velocity = Renderer.launchVelocity(for: i,
+                                                               launchAngleDegrees: launchAngleDegrees,
+                                                               angleVarianceDegrees: angleVarianceDegrees,
+                                                               velocityVariancePercent: velocityVariancePercent,
+                                                               speed: baseSpeed)
+            particlesPtr[i].color = Renderer.spectrumColor(for: i, count: maxRenderableParticleCount, spectrum: colorSource)
+            particlesPtr[i].life = Float.random(in: 0.1...1.0)
+            particlesPtr[i].size = constantParticleSize
+        }
+    }
+
     private static func launchSpeedForParticle(at index: Int,
                                                mode: ParticleSizeMode,
                                                constantVelocity: Float,
@@ -1006,7 +1049,14 @@ class Renderer: NSObject, MTKViewDelegate {
 
     private func resampledWeights(from distribution: SizeDistribution) -> [Float] {
         let points = SizeDistribution.resample(points: distribution.controlPoints, count: 10)
-        return points.map { max(0.0, min($0.y, 1.0)) }
+        var weights = points.map { max(0.0, min($0.y, 1.0)) }
+        if weights.count < 10 {
+            let fill = weights.last ?? 1.0
+            weights.append(contentsOf: repeatElement(fill, count: 10 - weights.count))
+        } else if weights.count > 10 {
+            weights = Array(weights.prefix(10))
+        }
+        return weights
     }
 
     private func regenerateParticleSizes() {
@@ -1157,10 +1207,11 @@ class Renderer: NSObject, MTKViewDelegate {
             switch cameraMotionModel {
             case .orbit:
                 let angle = elapsed * 0.45
+                // Orbit around origin in a tilted plane so the path crosses above and below y=0.
                 eye = SIMD3<Float>(
-                    planarRadius * sin(angle),
-                    baseY,
-                    planarRadius * cos(angle)
+                    radius * sin(angle),
+                    radius * cos(angle) * sin(inclination),
+                    radius * cos(angle) * cos(inclination)
                 )
             case .figureEight:
                 let angle = elapsed * 0.55
