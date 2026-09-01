@@ -17,9 +17,9 @@ enum ConfigurationCategory: Int, CaseIterable {
     var displayName: String {
         switch self {
         case .general: return "General"
-        case .particleColor: return "Particle Color"
-        case .particleSize: return "Particle Size"
-        case .particleVelocity: return "Particle Velocity"
+        case .particleColor: return "Color"
+        case .particleSize: return "Size"
+        case .particleVelocity: return "Velocity"
         case .camera: return "Camera"
         }
     }
