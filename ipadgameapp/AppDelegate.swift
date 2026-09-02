@@ -1,6 +1,5 @@
 //
 //  AppDelegate.swift
-//  ipadgameapp
 //
 //  Created by Dave Schmid on 8/15/26.
 //

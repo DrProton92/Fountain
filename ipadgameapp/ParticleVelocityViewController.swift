@@ -1,6 +1,3 @@
-//
-//  ParticleVelocitySettingsViewController.swift
-//
 
 import UIKit
 

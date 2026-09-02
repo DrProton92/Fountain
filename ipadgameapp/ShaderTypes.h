@@ -1,6 +1,5 @@
 //
 //  ShaderTypes.h
-//  ipadgameapp
 //
 
 #ifndef ShaderTypes_h

@@ -1,8 +1,4 @@
-//
-//  ParticleColorSettingsViewController.swift
-//
-//  Created by GitHub Copilot on 8/20/26.
-//
+
 
 import UIKit
 

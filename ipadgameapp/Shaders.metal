@@ -1,9 +1,3 @@
-//
-//  Shaders.metal
-//  ipadgameapp
-//
-//  Created by Dave Schmid on 8/15/26.
-//
 
 // File for Metal kernel and shader functions
 

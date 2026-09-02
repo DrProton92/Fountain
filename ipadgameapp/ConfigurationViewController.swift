@@ -1,9 +1,4 @@
-//
-//  ConfigurationViewController.swift
-//  ipadgameapp
-//
-//  Created by Dave Schmid on 8/19/26.
-//
+
 
 import UIKit
 
@@ -42,10 +37,10 @@ class ConfigurationViewController: UIViewController {
     private var detailContainerView: UIView!
     private var currentDetailViewController: UIViewController?
     private var generalSettingsViewController: GeneralSettingsViewController!
-    private var particleColorSettingsViewController: ParticleColorSettingsViewController!
-    private var particleSizeSettingsViewController: ParticleSizeConfigViewController!
-    private var particleVelocitySettingsViewController: ParticleVelocitySettingsViewController!
-    private var cameraSettingsViewController: CameraSettingsViewController!
+    private var particleColorSettingsViewController: ParticleColorViewController!
+    private var particleSizeSettingsViewController: ParticleSizeViewController!
+    private var particleVelocitySettingsViewController: ParticleVelocityViewController!
+    private var cameraSettingsViewController: CameraViewController!
     
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -72,13 +67,13 @@ class ConfigurationViewController: UIViewController {
 
         generalSettingsViewController = GeneralSettingsViewController()
         generalSettingsViewController.renderer = renderer
-        particleColorSettingsViewController = ParticleColorSettingsViewController()
+        particleColorSettingsViewController = ParticleColorViewController()
         particleColorSettingsViewController.renderer = renderer
-        particleSizeSettingsViewController = ParticleSizeConfigViewController()
+        particleSizeSettingsViewController = ParticleSizeViewController()
         particleSizeSettingsViewController.renderer = renderer
-        particleVelocitySettingsViewController = ParticleVelocitySettingsViewController()
+        particleVelocitySettingsViewController = ParticleVelocityViewController()
         particleVelocitySettingsViewController.renderer = renderer
-        cameraSettingsViewController = CameraSettingsViewController()
+        cameraSettingsViewController = CameraViewController()
         cameraSettingsViewController.renderer = renderer
         
         // Setup split view

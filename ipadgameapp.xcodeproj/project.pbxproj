@@ -148,6 +148,8 @@
 				DEVELOPMENT_TEAM = 53G4ULGAJ7;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = ipadgameapp/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Fountain;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.entertainment";
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UIMainStoryboardFile = Main;
 				INFOPLIST_KEY_UIRequiredDeviceCapabilities = metal;
@@ -159,7 +161,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = perspectivesolutions.ipadgameapp;
+				PRODUCT_BUNDLE_IDENTIFIER = perspectivesolutions.fountain;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
@@ -182,6 +184,8 @@
 				DEVELOPMENT_TEAM = 53G4ULGAJ7;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = ipadgameapp/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Fountain;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.entertainment";
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UIMainStoryboardFile = Main;
 				INFOPLIST_KEY_UIRequiredDeviceCapabilities = metal;
@@ -193,7 +197,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = perspectivesolutions.ipadgameapp;
+				PRODUCT_BUNDLE_IDENTIFIER = perspectivesolutions.fountain;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;

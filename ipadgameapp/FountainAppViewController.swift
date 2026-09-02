@@ -1,8 +1,4 @@
-//
-//  GameViewController.swift
-//
-//  Created by Dave Schmid on 8/15/26.
-//
+
 
 import UIKit
 import MetalKit

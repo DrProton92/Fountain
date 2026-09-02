@@ -1,9 +1,3 @@
-//
-//  DistributionEditorView.swift
-//  ipadgameapp
-//
-//  Created by Dave Schmid on 8/19/26.
-//
 
 import UIKit
 
