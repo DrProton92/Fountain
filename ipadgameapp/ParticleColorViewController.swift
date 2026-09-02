@@ -1,6 +1,5 @@
 //
 //  ParticleColorSettingsViewController.swift
-//  ipadgameapp
 //
 //  Created by GitHub Copilot on 8/20/26.
 //
@@ -357,7 +356,7 @@ final class SpectrumEditorView: UIView {
     }
 }
 
-final class ParticleColorSettingsViewController: UIViewController {
+final class ParticleColorViewController: UIViewController {
     
     var renderer: Renderer!
     private var isSingleColorMode = true

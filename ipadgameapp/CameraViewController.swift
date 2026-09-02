@@ -1,11 +1,10 @@
 //
 //  CameraSettingsViewController.swift
-//  ipadgameapp
 //
 
 import UIKit
 
-final class CameraSettingsViewController: UIViewController {
+final class CameraViewController: UIViewController {
 
     var renderer: Renderer!
 

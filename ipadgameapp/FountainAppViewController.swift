@@ -1,6 +1,5 @@
 //
 //  GameViewController.swift
-//  ipadgameapp
 //
 //  Created by Dave Schmid on 8/15/26.
 //
@@ -9,7 +8,7 @@ import UIKit
 import MetalKit
 
 // Our iOS specific view controller
-class GameViewController: UIViewController, UIGestureRecognizerDelegate {
+class FountainAppViewController: UIViewController, UIGestureRecognizerDelegate {
 
     var renderer: Renderer!
     var mtkView: MTKView!

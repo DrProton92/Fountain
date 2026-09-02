@@ -1,11 +1,10 @@
 //
 //  ParticleVelocitySettingsViewController.swift
-//  ipadgameapp
 //
 
 import UIKit
 
-final class ParticleVelocitySettingsViewController: UIViewController {
+final class ParticleVelocityViewController: UIViewController {
 
     var renderer: Renderer!
 

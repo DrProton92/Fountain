@@ -1,6 +1,5 @@
 //
 //  ParticleSizeConfigView.swift
-//  ipadgameapp
 //
 //  Created by Dave Schmid on 8/19/26.
 //
@@ -9,7 +8,7 @@ import UIKit
 
 
 /// View controller for particle size configuration
-class ParticleSizeConfigViewController: UIViewController {
+class ParticleSizeViewController: UIViewController {
     
     var renderer: Renderer!
     
