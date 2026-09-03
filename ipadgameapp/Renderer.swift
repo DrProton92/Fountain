@@ -1,428 +1,7 @@
-
 import Metal
 import MetalKit
 import QuartzCore
 import simd
-
-// The size of our uniform structure
-let alignedUniformsSize = (MemoryLayout<Uniforms>.size + 0xFF) & -0x100
-let maxBuffersInFlight = 3
-let maxParticleCount = 100_000_000
-let defaultParticleCount = 10000
-let preferredParticleBufferBudgetBytes = 256 * 1024 * 1024
-let maxTrailHistorySamples = 8
-
-enum RendererError: Error {
-    case pipelineCreationFailed
-}
-
-enum ParticleColorStyle: Int, CaseIterable {
-    case singleColor
-    case rainbow
-    case fire
-    case reddish
-    case bluish
-    case greenField
-    case neonNight
-
-    var displayName: String {
-        switch self {
-        case .singleColor: return "Single Color"
-        case .rainbow: return "Rainbow"
-        case .fire: return "Fire"
-        case .reddish: return "Red-ish"
-        case .bluish: return "Blue-ish"
-        case .greenField: return "Green-ish"
-        case .neonNight: return "Neon Night"
-        }
-    }
-}
-
-enum ParticleSizeMode: Int, CaseIterable {
-    case constant
-    case random
-
-    var displayName: String {
-        switch self {
-        case .constant: return "Single Value"
-        case .random: return "Spectrum"
-        }
-    }
-}
-
-enum CameraControlMode: Int, CaseIterable {
-    case touchControlled
-    case motionModel
-
-    var displayName: String {
-        switch self {
-        case .touchControlled: return "Touch Controlled"
-        case .motionModel: return "Motion Model"
-        }
-    }
-}
-
-enum CameraMotionModel: Int, CaseIterable {
-    case orbit
-    case figureEight
-
-    var displayName: String {
-        switch self {
-        case .orbit: return "Orbit"
-        case .figureEight: return "Figure Eight"
-        }
-    }
-}
-
-enum SizeDistributionPreset: Int, CaseIterable {
-    case gaussian
-    case skewedLeft
-    case skewedRight
-    case flat
-    case bigAndSmall
-
-    var displayName: String {
-        switch self {
-        case .gaussian: return "Gaussian"
-        case .skewedLeft: return "Smallish"
-        case .skewedRight: return "Largish"
-        case .flat: return "Flat"
-        case .bigAndSmall: return "Big&Small"
-        }
-    }
-}
-
-struct SizeDistribution {
-    var controlPoints: [SizeDistributionPoint] = []
-    private let presetPointCount = 10
-    
-    init() {
-        // Initialize with a uniform distribution
-        self.controlPoints = [
-            SizeDistributionPoint(x: 0.0, y: 1.0),
-            SizeDistributionPoint(x: 1.0, y: 1.0)
-        ]
-    }
-    
-    mutating func applyPreset(_ preset: SizeDistributionPreset, variancePercent: Float = 50.0) {
-        func points(from values: [(Float, Float)]) -> [SizeDistributionPoint] {
-            let raw = values.map { SizeDistributionPoint(x: $0.0, y: max(0, min($0.1, 1.0))) }
-            return SizeDistribution.resample(points: raw, count: presetPointCount)
-        }
-
-        let normalizedVariance = max(0.0, min(variancePercent, 100.0)) / 100.0
-        let varianceBias = (normalizedVariance - 0.5) * 2.0
-        // 50% keeps preset shape unchanged; lower broadens, higher makes it peakier.
-        let peakExponent = varianceBias >= 0
-            ? (1.0 + (varianceBias * 2.0))
-            : (1.0 + (varianceBias * 0.6))
-
-        func remapForVariance(_ x: Float) -> Float {
-            // Keep points in-bounds and monotonic while increasing center peakiness.
-            let centered = max(-1.0, min((x * 2.0) - 1.0, 1.0))
-            let magnitude = pow(abs(centered), peakExponent)
-            let signed = centered < 0 ? -magnitude : magnitude
-            return max(0.0, min(0.5 + (0.5 * signed), 1.0))
-        }
-
-        func withVariance(_ values: [(Float, Float)]) -> [(Float, Float)] {
-            values
-                .map { (x, y) in
-                    (remapForVariance(x), y)
-                }
-                .sorted { $0.0 < $1.0 }
-        }
-
-        switch preset {
-        case .gaussian:
-            self.controlPoints = points(from: withVariance([
-                (0.0, 0.0),
-                (0.12, 0.06),
-                (0.25, 0.28),
-                (0.40, 0.78),
-                (0.50, 1.0),
-                (0.60, 0.78),
-                (0.75, 0.28),
-                (0.88, 0.06),
-                (1.0, 0.0)
-            ]))
-        case .skewedLeft:
-            self.controlPoints = points(from: withVariance([
-                (0.0, 1.0),
-                (0.3, 0.8),
-                (0.7, 0.3),
-                (1.0, 0.0)
-            ]))
-        case .skewedRight:
-            self.controlPoints = points(from: withVariance([
-                (0.0, 0.0),
-                (0.3, 0.3),
-                (0.7, 0.8),
-                (1.0, 1.0)
-            ]))
-        case .flat:
-            self.controlPoints = points(from: [
-                (0.0, 1.0),
-                (1.0, 1.0)
-            ])
-        case .bigAndSmall:
-            self.controlPoints = points(from: withVariance([
-                (0.0, 1.0),
-                (0.1, 0.0),
-                (0.9, 0.0),
-                (1.0, 1.0)
-            ]))
-        }
-    }
-
-    static func resample(points: [SizeDistributionPoint], count: Int) -> [SizeDistributionPoint] {
-        guard count > 1, !points.isEmpty else { return points }
-        let sorted = points.sorted { $0.x < $1.x }
-        return (0..<count).map { i in
-            let x = Float(i) / Float(count - 1)
-            let y = sampleValue(at: x, points: sorted)
-            return SizeDistributionPoint(x: x, y: y)
-        }
-    }
-
-    private static func sampleValue(at normalized: Float, points: [SizeDistributionPoint]) -> Float {
-        let clamped = max(0, min(normalized, 1.0))
-        guard points.count > 1 else { return points.first?.y ?? 0.5 }
-        var left = points[0]
-        var right = points[1]
-        for i in 0..<(points.count - 1) {
-            if points[i].x <= clamped && clamped <= points[i + 1].x {
-                left = points[i]
-                right = points[i + 1]
-                break
-            }
-        }
-        let range = right.x - left.x
-        if range < 0.0001 { return left.y }
-        let t = (clamped - left.x) / range
-        return left.y + (right.y - left.y) * t
-    }
-    
-    func sampleValue(at normalized: Float) -> Float {
-        guard !controlPoints.isEmpty else { return 0.5 }
-        guard controlPoints.count > 1 else { return controlPoints[0].y }
-        
-        let clamped = max(0, min(normalized, 1.0))
-        
-        // Find the two control points to interpolate between
-        var left = controlPoints[0]
-        var right = controlPoints[1]
-        
-        for i in 0..<(controlPoints.count - 1) {
-            if controlPoints[i].x <= clamped && clamped <= controlPoints[i + 1].x {
-                left = controlPoints[i]
-                right = controlPoints[i + 1]
-                break
-            }
-        }
-        
-        // Linear interpolation
-        let range = right.x - left.x
-        if range < 0.0001 {
-            return left.y
-        }
-        let t = (clamped - left.x) / range
-        return left.y + (right.y - left.y) * t
-    }
-}
-
-struct SizeDistributionPoint {
-    var x: Float // 0.0 to 1.0
-    var y: Float // 0.0 to 1.0 (probability/weight)
-}
-
-struct ColorSpectrumPoint {
-    var x: Float // 0.0 to 1.0
-    var y: Float // 0.0 to 1.0 (graph height)
-    var color: SIMD4<Float>
-}
-
-struct ColorSpectrum {
-    var controlPoints: [ColorSpectrumPoint] = []
-    var preset: ParticleColorStyle = .singleColor
-    var singleColor: SIMD4<Float> = SIMD4<Float>(0.95, 0.95, 0.95, 1.0)
-
-    init() {
-        applyPreset(.singleColor)
-    }
-
-    init(controlPoints: [ColorSpectrumPoint], preset: ParticleColorStyle) {
-        self.controlPoints = controlPoints
-        self.preset = preset
-        self.singleColor = controlPoints.first?.color ?? self.singleColor
-    }
-
-    mutating func applyPreset(_ preset: ParticleColorStyle) {
-        self.preset = preset
-        func points(from values: [(Float, Float, SIMD4<Float>)]) -> [ColorSpectrumPoint] {
-            let raw = values.map { ColorSpectrumPoint(x: $0.0, y: $0.1, color: $0.2) }
-            return ColorSpectrum.resample(points: raw, count: 10)
-        }
-
-        func colorForSpectrumX(_ x: Float) -> SIMD4<Float> {
-            let t = max(0, min(x, 1))
-            let stops: [(Float, SIMD3<Float>)] = [
-                (0.0, SIMD3<Float>(0.58, 0.0, 0.83)),
-                (0.2, SIMD3<Float>(0.15, 0.35, 1.0)),
-                (0.45, SIMD3<Float>(0.0, 0.9, 0.65)),
-                (0.7, SIMD3<Float>(1.0, 0.9, 0.1)),
-                (0.88, SIMD3<Float>(1.0, 0.45, 0.0)),
-                (1.0, SIMD3<Float>(0.9, 0.05, 0.05))
-            ]
-            var left = stops[0]
-            var right = stops[1]
-            for i in 0..<(stops.count - 1) {
-                if stops[i].0 <= t && t <= stops[i + 1].0 {
-                    left = stops[i]
-                    right = stops[i + 1]
-                    break
-                }
-            }
-            let range = right.0 - left.0
-            let localT = range < 0.0001 ? 0 : (t - left.0) / range
-            let rgb = left.1 + (right.1 - left.1) * localT
-            return SIMD4<Float>(rgb.x, rgb.y, rgb.z, 1.0)
-        }
-
-        func fixedTenPointPreset(weights: [Float]) -> [ColorSpectrumPoint] {
-            guard weights.count == 10 else { return [] }
-            return (0..<10).map { i in
-                let x = Float(i) / 9.0
-                return ColorSpectrumPoint(x: x,
-                                          y: max(0, min(weights[i], 1)),
-                                          color: colorForSpectrumX(x))
-            }
-        }
-
-        switch preset {
-        case .singleColor:
-            let color = singleColor
-            controlPoints = ColorSpectrum.resample(points: [
-                ColorSpectrumPoint(x: 0.0, y: 0.5, color: color),
-                ColorSpectrumPoint(x: 1.0, y: 0.5, color: color)
-            ], count: 10)
-        case .rainbow:
-            controlPoints = points(from: [
-                (0.0, 0.5, SIMD4<Float>(0.6, 0.0, 1.0, 1.0)),
-                (0.25, 0.7, SIMD4<Float>(0.1, 0.3, 1.0, 1.0)),
-                (0.5, 0.9, SIMD4<Float>(0.1, 1.0, 0.25, 1.0)),
-                (0.75, 0.7, SIMD4<Float>(1.0, 0.85, 0.1, 1.0)),
-                (1.0, 0.5, SIMD4<Float>(1.0, 0.1, 0.1, 1.0))
-            ])
-        case .fire:
-            controlPoints = points(from: [
-                (0.0, 0.0, SIMD4<Float>(0.18, 0.0, 0.0, 1.0)),
-                (0.18, 0.06, SIMD4<Float>(0.45, 0.02, 0.0, 1.0)),
-                (0.32, 0.45, SIMD4<Float>(0.88, 0.04, 0.0, 1.0)),
-                (0.55, 1.0, SIMD4<Float>(1.0, 0.12, 0.0, 1.0)),
-                (0.74, 0.92, SIMD4<Float>(1.0, 0.86, 0.05, 1.0)),
-                (1.0, 0.10, SIMD4<Float>(1.0, 0.92, 0.18, 1.0))
-            ])
-        case .reddish:
-            // With red displayed on the left, this lights up only the first 3 visible dots.
-            controlPoints = fixedTenPointPreset(weights: [0, 0, 0, 0, 0, 0, 0, 0.7, 1.0, 0.85])
-        case .bluish:
-            // With red displayed on the left, this lights up only the last 3 visible dots.
-            controlPoints = fixedTenPointPreset(weights: [0.85, 1.0, 0.7, 0, 0, 0, 0, 0, 0, 0])
-        case .greenField:
-            controlPoints = points(from: [
-                (0.0, 0.06, SIMD4<Float>(0.1, 0.32, 0.08, 1.0)),
-                (0.25, 0.42, SIMD4<Float>(0.2, 0.55, 0.16, 1.0)),
-                (0.5, 1.0, SIMD4<Float>(0.35, 0.85, 0.28, 1.0)),
-                (0.75, 0.42, SIMD4<Float>(0.2, 0.55, 0.16, 1.0)),
-                (1.0, 0.06, SIMD4<Float>(0.1, 0.32, 0.08, 1.0))
-            ])
-        case .neonNight:
-            controlPoints = points(from: [
-                (0.0, 0.12, SIMD4<Float>(0.22, 0.0, 0.55, 1.0)),
-                (0.18, 1.0, SIMD4<Float>(0.05, 0.30, 1.0, 1.0)),
-                (0.32, 0.82, SIMD4<Float>(0.0, 0.52, 1.0, 1.0)),
-                (0.55, 0.18, SIMD4<Float>(0.2, 0.95, 1.0, 1.0)),
-                (1.0, 0.03, SIMD4<Float>(0.52, 0.0, 0.85, 1.0))
-            ])
-        }
-    }
-
-    static func resample(points: [ColorSpectrumPoint], count: Int) -> [ColorSpectrumPoint] {
-        guard count > 1, !points.isEmpty else { return points }
-        let sorted = points.sorted { $0.x < $1.x }
-        return (0..<count).map { i in
-            let x = Float(i) / Float(count - 1)
-            return ColorSpectrumPoint(x: x,
-                                      y: sampleValue(at: x, points: sorted, keyPath: \ColorSpectrumPoint.y),
-                                      color: sampleColor(at: x, points: sorted))
-        }
-    }
-
-    private static func sampleValue(at normalized: Float, points: [ColorSpectrumPoint], keyPath: KeyPath<ColorSpectrumPoint, Float>) -> Float {
-        let clamped = max(0, min(normalized, 1.0))
-        guard points.count > 1 else { return points.first?[keyPath: keyPath] ?? 0.5 }
-        var left = points[0]
-        var right = points[1]
-        for i in 0..<(points.count - 1) {
-            if points[i].x <= clamped && clamped <= points[i + 1].x {
-                left = points[i]
-                right = points[i + 1]
-                break
-            }
-        }
-        let range = right.x - left.x
-        if range < 0.0001 { return left[keyPath: keyPath] }
-        let t = (clamped - left.x) / range
-        return left[keyPath: keyPath] + (right[keyPath: keyPath] - left[keyPath: keyPath]) * t
-    }
-
-    private static func sampleColor(at normalized: Float, points: [ColorSpectrumPoint]) -> SIMD4<Float> {
-        let clamped = max(0, min(normalized, 1.0))
-        guard points.count > 1 else { return points.first?.color ?? SIMD4<Float>(1, 1, 1, 1) }
-        var left = points[0]
-        var right = points[1]
-        for i in 0..<(points.count - 1) {
-            if points[i].x <= clamped && clamped <= points[i + 1].x {
-                left = points[i]
-                right = points[i + 1]
-                break
-            }
-        }
-        let range = right.x - left.x
-        if range < 0.0001 { return left.color }
-        let t = (clamped - left.x) / range
-        return left.color + (right.color - left.color) * t
-    }
-
-    func sampleColor(at normalized: Float) -> SIMD4<Float> {
-        if preset == .singleColor {
-            return singleColor
-        }
-        guard !controlPoints.isEmpty else { return singleColor }
-        guard controlPoints.count > 1 else { return controlPoints[0].color }
-
-        let clamped = max(0, min(normalized, 1.0))
-        var left = controlPoints[0]
-        var right = controlPoints[1]
-
-        for i in 0..<(controlPoints.count - 1) {
-            if controlPoints[i].x <= clamped && clamped <= controlPoints[i + 1].x {
-                left = controlPoints[i]
-                right = controlPoints[i + 1]
-                break
-            }
-        }
-
-        let range = right.x - left.x
-        if range < 0.0001 {
-            return left.color
-        }
-
-        let t = (clamped - left.x) / range
-        return left.color + (right.color - left.color) * t
-    }
-}
 
 class Renderer: NSObject, MTKViewDelegate {
     
@@ -433,6 +12,7 @@ class Renderer: NSObject, MTKViewDelegate {
     let particleBuffer: MTLBuffer
     let computePipelineState: MTLComputePipelineState
     let renderPipelineState: MTLRenderPipelineState
+    let axisRenderPipelineState: MTLRenderPipelineState
     
     var dynamicUniformBuffer: MTLBuffer
     let uniformBufferRawPointer: UnsafeMutableRawPointer
@@ -467,6 +47,7 @@ class Renderer: NSObject, MTKViewDelegate {
     private(set) var launchAngleDegrees: Float = 0.0
     private(set) var angleVarianceDegrees: Float = 12.0
     private(set) var velocityVariancePercent: Float = 0.0
+    private(set) var showAxis: Bool = false
 
     // Trail rendering configuration
     private(set) var trailsEnabled: Bool = false
@@ -547,10 +128,10 @@ class Renderer: NSObject, MTKViewDelegate {
                 distribution: initialVelocityDistribution
             )
             particlesPtr[i].velocity = Renderer.launchVelocity(for: i,
-                                                              launchAngleDegrees: launchAngleDegrees,
-                                                              angleVarianceDegrees: angleVarianceDegrees,
-                                                              velocityVariancePercent: velocityVariancePercent,
-                                                              speed: baseSpeed)
+                                                               launchAngleDegrees: launchAngleDegrees,
+                                                               angleVarianceDegrees: angleVarianceDegrees,
+                                                               velocityVariancePercent: velocityVariancePercent,
+                                                               speed: baseSpeed)
             particlesPtr[i].color = Renderer.spectrumColor(for: i,
                                                            count: maxRenderableParticleCount,
                                                            spectrum: initialSpectrum)
@@ -562,7 +143,9 @@ class Renderer: NSObject, MTKViewDelegate {
         let library = device.makeDefaultLibrary()
         guard let computeFunc = library?.makeFunction(name: "particle_compute"),
               let vertexFunc = library?.makeFunction(name: "particle_vertex"),
-              let fragmentFunc = library?.makeFunction(name: "fragmentShader") else { return nil }
+              let fragmentFunc = library?.makeFunction(name: "fragmentShader"),
+              let axisVertexFunc = library?.makeFunction(name: "axis_vertex"),
+              let axisFragmentFunc = library?.makeFunction(name: "axis_fragment") else { return nil }
         
         // Compute Pipeline
         guard let cState = try? device.makeComputePipelineState(function: computeFunc) else { return nil }
@@ -576,6 +159,15 @@ class Renderer: NSObject, MTKViewDelegate {
         
         guard let rState = try? device.makeRenderPipelineState(descriptor: pipelineDescriptor) else { return nil }
         self.renderPipelineState = rState
+
+        // Axis Render Pipeline
+        let axisPipelineDescriptor = MTLRenderPipelineDescriptor()
+        axisPipelineDescriptor.vertexFunction = axisVertexFunc
+        axisPipelineDescriptor.fragmentFunction = axisFragmentFunc
+        axisPipelineDescriptor.colorAttachments[0].pixelFormat = metalKitView.colorPixelFormat
+        
+        guard let axisRState = try? device.makeRenderPipelineState(descriptor: axisPipelineDescriptor) else { return nil }
+        self.axisRenderPipelineState = axisRState
 
         super.init()
         regenerateParticleLaunchVelocities()
@@ -614,8 +206,8 @@ class Renderer: NSObject, MTKViewDelegate {
         frameUniforms.velocityWeight7 = velocityWeights[7]
         frameUniforms.velocityWeight8 = velocityWeights[8]
         frameUniforms.velocityWeight9 = velocityWeights[9]
+        frameUniforms.showAxis = showAxis ? 1 : 0
 
-        // Write one frame's uniforms into the ring-buffer slot.
         let destination = uniformBufferRawPointer.advanced(by: uniformBufferOffset)
         withUnsafeBytes(of: frameUniforms) { rawBytes in
             destination.copyMemory(from: rawBytes.baseAddress!, byteCount: MemoryLayout<Uniforms>.stride)
@@ -636,46 +228,53 @@ class Renderer: NSObject, MTKViewDelegate {
         self.updateDynamicBufferState()
         self.updateGameState()
         
-        // --- Step 1: Compute Pass (Update Particles) ---
+        // --- Step 1: Compute Pass ---
         if let computeEncoder = commandBuffer.makeComputeCommandEncoder() {
             computeEncoder.setComputePipelineState(computePipelineState)
-            // Buffer index values are defined in ShaderTypes.h as integer constants.
-            // Use the integer indices directly to avoid C enum name-mapping issues.
-            computeEncoder.setBuffer(particleBuffer, offset: 0, index: 0) // BufferIndexParticles
-            computeEncoder.setBuffer(dynamicUniformBuffer, offset: uniformBufferOffset, index: 1) // BufferIndexUniforms
-            computeEncoder.setBuffer(trailHistoryBuffer ?? fallbackTrailHistoryBuffer, offset: 0, index: 2) // BufferIndexTrails
+            computeEncoder.setBuffer(particleBuffer, offset: 0, index: 0)
+            computeEncoder.setBuffer(dynamicUniformBuffer, offset: uniformBufferOffset, index: 1)
+            computeEncoder.setBuffer(trailHistoryBuffer ?? fallbackTrailHistoryBuffer, offset: 0, index: 2)
             
-            let threadsPerGroup = MTLSize(width: 64, height: 1, depth: 1)
+            let threadsPerThreadgroup = MTLSize(width: 64, height: 1, depth: 1)
             let threadgroups = MTLSize(
-                width: (activeParticleCount + threadsPerGroup.width - 1) / threadsPerGroup.width,
+                width: (activeParticleCount + threadsPerThreadgroup.width - 1) / threadsPerThreadgroup.width,
                 height: 1,
                 depth: 1
             )
-            computeEncoder.dispatchThreadgroups(threadgroups, threadsPerThreadgroup: threadsPerGroup)
+            computeEncoder.dispatchThreadgroups(threadgroups, threadsPerThreadgroup: threadsPerThreadgroup)
             computeEncoder.endEncoding()
         }
         
-        // --- Step 2: Render Pass (Draw Particles) ---
+        // --- Step 2: Render Pass ---
         guard let renderPassDescriptor = view.currentRenderPassDescriptor,
-              let drawable = view.currentDrawable,
-              let renderEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDescriptor) else {
+              let drawable = view.currentDrawable else {
             commandBuffer.commit()
             return
         }
-            
-            renderEncoder.setRenderPipelineState(renderPipelineState)
-            renderEncoder.setVertexBuffer(particleBuffer, offset: 0, index: 0)
-            renderEncoder.setVertexBuffer(dynamicUniformBuffer, offset: uniformBufferOffset, index: 1) // BufferIndexUniforms
-            renderEncoder.setVertexBuffer(trailHistoryBuffer ?? fallbackTrailHistoryBuffer, offset: 0, index: 2) // BufferIndexTrails
-            
+        
+        let renderEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDescriptor)!
+        
+        // Draw Particles
+        renderEncoder.setRenderPipelineState(renderPipelineState)
+        renderEncoder.setVertexBuffer(particleBuffer, offset: 0, index: 0)
+        renderEncoder.setVertexBuffer(dynamicUniformBuffer, offset: uniformBufferOffset, index: 1)
+        renderEncoder.setVertexBuffer(trailHistoryBuffer ?? fallbackTrailHistoryBuffer, offset: 0, index: 2)
+        
         let trailSamples = (trailsEnabled && trailHistoryBuffer != nil && trailHistoryCapacity >= activeParticleCount)
             ? Int(round(max(1.0, min(trailLength, Float(maxTrailHistorySamples)))))
             : 0
         let vertexCount = activeParticleCount * (trailSamples + 1)
         renderEncoder.drawPrimitives(type: .point, vertexStart: 0, vertexCount: vertexCount)
+
+        // Draw Axes
+        if showAxis {
+            renderEncoder.setRenderPipelineState(axisRenderPipelineState)
+            renderEncoder.setVertexBuffer(dynamicUniformBuffer, offset: uniformBufferOffset, index: 1)
+            renderEncoder.drawPrimitives(type: .line, vertexStart: 0, vertexCount: 6)
+        }
+        
         renderEncoder.endEncoding()
         commandBuffer.present(drawable)
-        
         commandBuffer.commit()
     }
 
@@ -689,9 +288,6 @@ class Renderer: NSObject, MTKViewDelegate {
 
     func updateCameraZoom(scaleFactor: Float) {
         guard cameraControlMode == .touchControlled else { return }
-        // scaleFactor is the delta scale from the last frame
-        // > 1.0 means spreading/zooming in, < 1.0 means pinching/zooming out
-        // Apply the scale factor to the distance
         let newDistance = cameraDistance / scaleFactor
         cameraDistance = min(max(newDistance, 1.5), 12.0)
     }
@@ -772,7 +368,7 @@ class Renderer: NSObject, MTKViewDelegate {
              trailsEnabled = false
          }
          applyColorStyle(in: 0..<activeParticleCount)
-         regenerateParticleSizes()  // Assign sizes to new particles
+         regenerateParticleSizes()
          regenerateParticleLaunchVelocities()
      }
 
@@ -787,7 +383,7 @@ class Renderer: NSObject, MTKViewDelegate {
         colorSpectrum = spectrum
         particleColorStyle = spectrum.preset
         applyColorStyle(in: 0..<activeParticleCount)
-    }
+     }
 
     func setSingleColor(_ color: SIMD4<Float>) {
         colorSpectrum.singleColor = color
@@ -839,7 +435,7 @@ class Renderer: NSObject, MTKViewDelegate {
 
     func setSizeRange(_ minValue: Float, _ maxValue: Float) {
         let minClamped = max(0.5, min(minValue, 50.0))
-        let maxClamped = max(0.5, min(maxValue, 50.0))
+        let maxClamped = max(0.0, min(maxValue, 50.0))
         minSizeRange = min(minClamped, maxClamped)
         maxSizeRange = max(minClamped, maxClamped)
         if particleSizeMode == .random {
@@ -864,7 +460,11 @@ class Renderer: NSObject, MTKViewDelegate {
 
     func setTrailsEnabled(_ enabled: Bool) {
         if enabled {
-            trailsEnabled = ensureTrailHistoryCapacity(requiredCount: activeParticleCount)
+            if !ensureTrailHistoryCapacity(requiredCount: activeParticleCount) {
+                trailsEnabled = false
+            } else {
+                trailsEnabled = true
+            }
         } else {
             trailsEnabled = false
         }
@@ -872,6 +472,10 @@ class Renderer: NSObject, MTKViewDelegate {
 
     func setTrailLength(_ length: Float) {
         trailLength = max(1.0, min(length, Float(maxTrailHistorySamples)))
+    }
+
+    func setShowAxis(_ enabled: Bool) {
+        showAxis = enabled
     }
 
     private func ensureTrailHistoryCapacity(requiredCount: Int) -> Bool {
@@ -905,7 +509,14 @@ class Renderer: NSObject, MTKViewDelegate {
     private func regenerateParticleLaunchVelocities() {
         let particlesPtr = particleBuffer.contents().bindMemory(to: Particle.self, capacity: maxRenderableParticleCount)
         for i in 0..<activeParticleCount {
-            let baseSpeed = launchSpeedForParticle(at: i)
+            let baseSpeed = Renderer.launchSpeedForParticle(
+                at: i,
+                mode: particleVelocityMode,
+                constantVelocity: constantParticleVelocity,
+                minVelocityRange: minVelocityRange,
+                maxVelocityRange: maxVelocityRange,
+                distribution: velocityDistribution
+            )
             particlesPtr[i].velocity = Renderer.launchVelocity(for: i,
                                                                launchAngleDegrees: launchAngleDegrees,
                                                                angleVarianceDegrees: angleVarianceDegrees,
@@ -952,7 +563,9 @@ class Renderer: NSObject, MTKViewDelegate {
                                                                angleVarianceDegrees: angleVarianceDegrees,
                                                                velocityVariancePercent: velocityVariancePercent,
                                                                speed: baseSpeed)
-            particlesPtr[i].color = Renderer.spectrumColor(for: i, count: maxRenderableParticleCount, spectrum: colorSource)
+            particlesPtr[i].color = Renderer.spectrumColor(for: i,
+                                                           count: maxRenderableParticleCount,
+                                                           spectrum: colorSource)
             particlesPtr[i].life = Float.random(in: 0.1...1.0)
             particlesPtr[i].size = constantParticleSize
         }
@@ -960,10 +573,10 @@ class Renderer: NSObject, MTKViewDelegate {
 
     private static func launchSpeedForParticle(at index: Int,
                                                mode: ParticleSizeMode,
-                                               constantVelocity: Float,
-                                               minVelocityRange: Float,
-                                               maxVelocityRange: Float,
-                                               distribution: SizeDistribution) -> Float {
+                constantVelocity: Float,
+                minVelocityRange: Float,
+                maxVelocityRange: Float,
+                distribution: SizeDistribution) -> Float {
         switch mode {
         case .constant:
             return constantVelocity
@@ -1019,7 +632,7 @@ class Renderer: NSObject, MTKViewDelegate {
                     let a = 0.5 * dw * dx
                     let b = w0 * dx
                     let c = -localArea
-                    let discriminant = max(0, (b * b) - (4 * a * c))
+                    let discriminant = max(0.0, (b * b) - (4 * a * c))
                     let sqrtDiscriminant = sqrt(discriminant)
                     let t1 = (-b + sqrtDiscriminant) / (2 * a)
                     let t2 = (-b - sqrtDiscriminant) / (2 * a)
@@ -1078,7 +691,6 @@ class Renderer: NSObject, MTKViewDelegate {
         let epsilon: Float = 0.000001
         let clampedRandom = max(0, min(unitRandom, 1.0))
 
-        // Treat control-point heights as a piecewise-linear PDF and invert its CDF.
         var segmentAreas: [Float] = []
         segmentAreas.reserveCapacity(points.count - 1)
         var totalArea: Float = 0
@@ -1100,12 +712,11 @@ class Renderer: NSObject, MTKViewDelegate {
         var accumulated: Float = 0
 
         for i in 0..<(points.count - 1) {
-            let segmentArea = segmentAreas[i]
-            if segmentArea <= epsilon {
+            if segmentAreas[i] <= epsilon {
                 continue
             }
 
-            let nextAccumulated = accumulated + segmentArea
+            let nextAccumulated = accumulated + segmentAreas[i]
             if targetArea <= nextAccumulated || i == points.count - 2 {
                 let x0 = points[i].x
                 let x1 = points[i + 1].x
@@ -1123,7 +734,7 @@ class Renderer: NSObject, MTKViewDelegate {
                     let a = 0.5 * dw * dx
                     let b = w0 * dx
                     let c = -localArea
-                    let discriminant = max(0, (b * b) - (4 * a * c))
+                    let discriminant = max(0.0, (b * b) - (4 * a * c))
                     let sqrtDiscriminant = sqrt(discriminant)
                     let t1 = (-b + sqrtDiscriminant) / (2 * a)
                     let t2 = (-b - sqrtDiscriminant) / (2 * a)
@@ -1170,7 +781,7 @@ class Renderer: NSObject, MTKViewDelegate {
         let w = stableUnitRandom(for: index &* 1103515245 &+ 12345)
 
         let cosAlpha = ((1 - u) * cos(coneHalfRadians)) + u
-        let sinAlpha = sqrt(max(0, 1 - (cosAlpha * cosAlpha)))
+        let sinAlpha = sqrt(max(0.0, 1 - (cosAlpha * cosAlpha)))
         let phi = 2 * Float.pi * v
 
         let helper = abs(axis.y) < 0.99 ? SIMD3<Float>(0, 1, 0) : SIMD3<Float>(1, 0, 0)
@@ -1179,7 +790,7 @@ class Renderer: NSObject, MTKViewDelegate {
         let direction = simd_normalize(axis * cosAlpha + tangent * (cos(phi) * sinAlpha) + bitangent * (sin(phi) * sinAlpha))
 
         let speedScale = (1 - velocityVariance) + velocityVariance * (1 + ((2 * w) - 1))
-        return direction * (speed * max(0, speedScale))
+        return direction * (speed * max(0.0, speedScale))
     }
 
     private func makeViewMatrix() -> matrix_float4x4 {
@@ -1196,12 +807,9 @@ class Renderer: NSObject, MTKViewDelegate {
             let elapsed = Float(CACurrentMediaTime() - cameraMotionStartTime)
             let radius = max(1.0, cameraDistance)
             let inclination = radians_from_degrees(max(0.0, min(cameraInclinationDegrees, 85.0)))
-            let planarRadius = max(0.05, radius * cos(inclination))
-            let baseY = radius * sin(inclination)
             switch cameraMotionModel {
             case .orbit:
                 let angle = elapsed * 0.45
-                // Orbit around origin in a tilted plane so the path crosses above and below y=0.
                 eye = SIMD3<Float>(
                     radius * sin(angle),
                     radius * cos(angle) * sin(inclination),
@@ -1209,10 +817,12 @@ class Renderer: NSObject, MTKViewDelegate {
                 )
             case .figureEight:
                 let angle = elapsed * 0.55
+                let radius_ee = max(0.05, radius * cos(inclination))
+                let baseY_ee = radius * sin(inclination)
                 eye = SIMD3<Float>(
-                    planarRadius * sin(angle),
-                    baseY + (0.10 * planarRadius * cos(angle)),
-                    0.5 * planarRadius * sin(2 * angle)
+                    radius_ee * sin(2 * angle),
+                    baseY_ee + (0.10 * radius_ee * cos(angle)),
+                    0.5 * radius_ee * sin(2 * angle)
                 )
             }
         }
@@ -1284,63 +894,4 @@ class Renderer: NSObject, MTKViewDelegate {
             farZ: 100.0
         )
     }
-}
-
-// Matrix math utilities
-func matrix4x4_translation(_ translationX: Float, _ translationY: Float, _ translationZ: Float) -> matrix_float4x4 {
-    return matrix_float4x4.init(columns:(vector_float4(1, 0, 0, 0),
-                                         vector_float4(0, 1, 0, 0),
-                                         vector_float4(0, 0, 1, 0),
-                                         vector_float4(translationX, translationY, translationZ, 1)))
-}
-
-func matrix_perspective_right_hand(fovyRadians fovy: Float, aspectRatio: Float, nearZ: Float, farZ: Float) -> matrix_float4x4 {
-    let ys = 1 / tanf(fovy * 0.5)
-    let xs = ys / aspectRatio
-    let zs = farZ / (nearZ - farZ)
-    return matrix_float4x4.init(columns:(vector_float4(xs,  0, 0,   0),
-                                         vector_float4( 0, ys, 0,   0),
-                                         vector_float4( 0,  0, zs, -1),
-                                         vector_float4( 0,  0, zs * nearZ, 0)))
-}
-
-func matrix4x4_rotation(radians: Float, axis: SIMD3<Float>) -> matrix_float4x4 {
-    let normalizedAxis = simd_normalize(axis)
-    let x = normalizedAxis.x
-    let y = normalizedAxis.y
-    let z = normalizedAxis.z
-    let c = cos(radians)
-    let s = sin(radians)
-    let mc = 1.0 - c
-
-    return matrix_float4x4(columns: (
-        SIMD4<Float>(c + x * x * mc, x * y * mc + z * s, x * z * mc - y * s, 0),
-        SIMD4<Float>(y * x * mc - z * s, c + y * y * mc, y * z * mc + x * s, 0),
-        SIMD4<Float>(z * x * mc + y * s, z * y * mc - x * s, c + z * z * mc, 0),
-        SIMD4<Float>(0, 0, 0, 1)
-    ))
-}
-
-func matrix_look_at_right_hand(eye: SIMD3<Float>, target: SIMD3<Float>, up: SIMD3<Float>) -> matrix_float4x4 {
-    let zAxis = simd_normalize(eye - target)
-    let xAxis = simd_normalize(simd_cross(up, zAxis))
-    let yAxis = simd_cross(zAxis, xAxis)
-
-    let translation = SIMD3<Float>(
-        -simd_dot(xAxis, eye),
-        -simd_dot(yAxis, eye),
-        -simd_dot(zAxis, eye)
-    )
-
-    return matrix_float4x4(columns: (
-        SIMD4<Float>(xAxis.x, yAxis.x, zAxis.x, 0),
-        SIMD4<Float>(xAxis.y, yAxis.y, zAxis.y, 0),
-        SIMD4<Float>(xAxis.z, yAxis.z, zAxis.z, 0),
-        SIMD4<Float>(translation.x, translation.y, translation.z, 1)
-    ))
-
-}
-
-func radians_from_degrees(_ degrees: Float) -> Float {
-    return (degrees / 180) * .pi
 }

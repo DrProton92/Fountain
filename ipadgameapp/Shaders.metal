@@ -1,3 +1,9 @@
+//
+//  Shaders.metal
+//  ipadgameapp
+//
+//  Created by Dave Schmid on 8/15/26.
+//
 
 // File for Metal kernel and shader functions
 
@@ -238,4 +244,45 @@ fragment float4 fragmentShader(ParticleVertexOutput in [[stage_in]],
 
     float edgeAlpha = smoothstep(0.5, 0.45, distanceFromCenter);
     return float4(in.color.rgb, in.color.a * edgeAlpha * in.alphaMultiplier);
+}
+
+// --- Axis Render Shaders ---
+struct AxisVertexOutput {
+    float4 position [[position]];
+    float4 color;
+};
+
+vertex AxisVertexOutput axis_vertex(uint vid [[vertex_id]],
+                                    constant Uniforms& uniforms [[buffer(BufferIndexUniforms)]])
+{
+    AxisVertexOutput out;
+
+    // 6 vertices: 3 lines × 2 endpoints each
+    // vid 0-1: X axis (red), vid 2-3: Y axis (green), vid 4-5: Z axis (blue)
+    uint lineIndex = vid / 2;
+    uint isEndpoint = vid % 2;
+
+    const float axisLength = 1.0f;
+
+    float3 pos;
+    float3 color;
+
+    if (lineIndex == 0) {
+        pos = isEndpoint == 0 ? float3(0.0f) : float3(axisLength, 0.0f, 0.0f);
+        color = float3(1.0f, 0.0f, 0.0f);
+    } else if (lineIndex == 1) {
+        pos = isEndpoint == 0 ? float3(0.0f) : float3(0.0f, axisLength, 0.0f);
+        color = float3(0.0f, 1.0f, 0.0f);
+    } else {
+        pos = isEndpoint == 0 ? float3(0.0f) : float3(0.0f, 0.0f, axisLength);
+        color = float3(0.0f, 0.0f, 1.0f);
+    }
+
+    out.position = uniforms.projectionMatrix * uniforms.viewMatrix * float4(pos, 1.0);
+    out.color = float4(color, 1.0);
+    return out;
+}
+
+fragment float4 axis_fragment(AxisVertexOutput in [[stage_in]]) {
+    return in.color;
 }

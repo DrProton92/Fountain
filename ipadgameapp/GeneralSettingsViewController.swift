@@ -1,4 +1,3 @@
-
 import UIKit
 
 final class GeneralSettingsViewController: UIViewController {
@@ -10,7 +9,8 @@ final class GeneralSettingsViewController: UIViewController {
     private var angleVarianceDegrees: Float = 12.0
     private var trailsEnabled: Bool = false
     private var trailLength: Float = 2.0
-
+    private var showAxis: Bool = false
+    
     private var countSlider: UISlider!
     private var countField: UITextField!
     private var launchAngleSlider: UISlider!
@@ -18,6 +18,7 @@ final class GeneralSettingsViewController: UIViewController {
     private var angleVarianceSlider: UISlider!
     private var angleVarianceField: UITextField!
     private var trailsSwitch: UISwitch!
+    private var axisSwitch: UISwitch!
     private var trailLengthRowContainer: UIStackView!
     private var trailLengthSlider: UISlider!
     private var trailLengthField: UITextField!
@@ -30,6 +31,7 @@ final class GeneralSettingsViewController: UIViewController {
         angleVarianceDegrees = renderer.angleVarianceDegrees
         trailsEnabled = renderer.trailsEnabled
         trailLength = renderer.trailLength
+        showAxis = renderer.showAxis
         view.backgroundColor = .systemBackground
         
         let scrollView = UIScrollView()
@@ -92,6 +94,20 @@ final class GeneralSettingsViewController: UIViewController {
         trailsToggleRow.addArrangedSubview(trailsSwitch)
         mainStack.addArrangedSubview(trailsToggleRow)
 
+        let axisSwitchToggleRow = UIStackView()
+        axisSwitchToggleRow.axis = .horizontal
+        axisSwitchToggleRow.spacing = 12
+        axisSwitchToggleRow.alignment = .center
+        let axisSwitchLabel = UILabel()
+        axisSwitchLabel.text = "Show Axis"
+        axisSwitchLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        axisSwitch = UISwitch()
+        axisSwitch.isOn = showAxis
+        axisSwitchToggleRow.addArrangedSubview(axisSwitchLabel)
+        axisSwitchToggleRow.addArrangedSubview(UIView())
+        axisSwitchToggleRow.addArrangedSubview(axisSwitch)
+        mainStack.addArrangedSubview(axisSwitchToggleRow)
+
         let trailLengthRow = makeSliderValueRow(title: "Trail Length", value: trailLength, min: 1, max: Float(maxTrailHistorySamples), isLogSlider: false)
         trailLengthRowContainer = trailLengthRow.container
         trailLengthSlider = trailLengthRow.slider
@@ -126,6 +142,7 @@ final class GeneralSettingsViewController: UIViewController {
         renderer.setAngleVariance(angleVarianceDegrees)
         renderer.setTrailsEnabled(trailsEnabled)
         renderer.setTrailLength(trailLength)
+        renderer.setShowAxis(showAxis)
     }
 
     private func wireEvents() {
@@ -178,6 +195,12 @@ final class GeneralSettingsViewController: UIViewController {
             self.trailLengthRowContainer.isHidden = !self.trailsEnabled
         }, for: .valueChanged)
 
+        axisSwitch.addAction(UIAction { [weak self] _ in
+            guard let self else { return }
+            self.showAxis = self.axisSwitch.isOn
+            self.renderer.setShowAxis(self.showAxis)
+        }, for: .valueChanged)
+
         trailLengthSlider.addAction(UIAction { [weak self] _ in
             guard let self else { return }
             self.trailLength = round(self.trailLengthSlider.value)
@@ -190,7 +213,6 @@ final class GeneralSettingsViewController: UIViewController {
             self.trailLength = self.sanitizeTrailLengthField(self.trailLengthField, fallback: self.trailLength)
             self.trailLengthSlider.value = self.trailLength
         }, for: .editingDidEnd)
-
     }
 
     private func sanitizeTrailLengthField(_ field: UITextField, fallback: Float) -> Float {
@@ -280,6 +302,6 @@ final class GeneralSettingsViewController: UIViewController {
         let minLog = log10(Float(minParticleCount))
         let maxLog = log10(Float(maxParticleCount))
         let clamped = Float(min(max(count, minParticleCount), maxParticleCount))
-        return (log10(clamped) - minLog) / (maxLog - minLog)
+        return (log(clamped) - minLog) / (maxLog - minLog)
     }
 }

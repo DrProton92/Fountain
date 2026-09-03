@@ -1,5 +1,6 @@
 //
 //  ShaderTypes.h
+//  ipadgameapp
 //
 
 #ifndef ShaderTypes_h
@@ -46,6 +47,7 @@ typedef struct {
     shared_uint velocityMode;
     shared_uint trailSampleCount;
     shared_uint trailsEnabled;
+    shared_uint showAxis;
     float launchAngleRadians;
     float angleVarianceRadians;
     float launchSpeed;
