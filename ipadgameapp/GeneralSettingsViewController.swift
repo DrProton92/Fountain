@@ -75,6 +75,20 @@ final class GeneralSettingsViewController: UIViewController {
         angleVarianceField = coneRow.field
         mainStack.addArrangedSubview(coneRow.container)
 
+        let axisSwitchToggleRow = UIStackView()
+        axisSwitchToggleRow.axis = .horizontal
+        axisSwitchToggleRow.spacing = 12
+        axisSwitchToggleRow.alignment = .center
+        let axisSwitchLabel = UILabel()
+        axisSwitchLabel.text = "Show Axis"
+        axisSwitchLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        axisSwitch = UISwitch()
+        axisSwitch.isOn = showAxis
+        axisSwitchToggleRow.addArrangedSubview(axisSwitchLabel)
+        axisSwitchToggleRow.addArrangedSubview(UIView())
+        axisSwitchToggleRow.addArrangedSubview(axisSwitch)
+        mainStack.addArrangedSubview(axisSwitchToggleRow)
+
         let trailsLabel = UILabel()
         trailsLabel.text = "Trails"
         trailsLabel.font = .boldSystemFont(ofSize: 16)
@@ -93,20 +107,6 @@ final class GeneralSettingsViewController: UIViewController {
         trailsToggleRow.addArrangedSubview(UIView())
         trailsToggleRow.addArrangedSubview(trailsSwitch)
         mainStack.addArrangedSubview(trailsToggleRow)
-
-        let axisSwitchToggleRow = UIStackView()
-        axisSwitchToggleRow.axis = .horizontal
-        axisSwitchToggleRow.spacing = 12
-        axisSwitchToggleRow.alignment = .center
-        let axisSwitchLabel = UILabel()
-        axisSwitchLabel.text = "Show Axis"
-        axisSwitchLabel.font = .systemFont(ofSize: 13, weight: .medium)
-        axisSwitch = UISwitch()
-        axisSwitch.isOn = showAxis
-        axisSwitchToggleRow.addArrangedSubview(axisSwitchLabel)
-        axisSwitchToggleRow.addArrangedSubview(UIView())
-        axisSwitchToggleRow.addArrangedSubview(axisSwitch)
-        mainStack.addArrangedSubview(axisSwitchToggleRow)
 
         let trailLengthRow = makeSliderValueRow(title: "Trail Length", value: trailLength, min: 1, max: Float(maxTrailHistorySamples), isLogSlider: false)
         trailLengthRowContainer = trailLengthRow.container
