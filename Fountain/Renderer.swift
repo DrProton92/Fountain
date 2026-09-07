@@ -270,7 +270,8 @@ class Renderer: NSObject, MTKViewDelegate {
         if showAxis {
             renderEncoder.setRenderPipelineState(axisRenderPipelineState)
             renderEncoder.setVertexBuffer(dynamicUniformBuffer, offset: uniformBufferOffset, index: 1)
-            renderEncoder.drawPrimitives(type: .line, vertexStart: 0, vertexCount: 6)
+            // Each axis is emitted as a thick shaft plus one triangular arrowhead.
+            renderEncoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 27)
         }
         
         renderEncoder.endEncoding()

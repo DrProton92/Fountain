@@ -270,7 +270,9 @@ final class GeneralSettingsViewController: UIViewController {
         field.textAlignment = .center
         field.text = isLogSlider ? "\(Int(value))" : String(format: "%.1f", value)
         field.translatesAutoresizingMaskIntoConstraints = false
-        field.widthAnchor.constraint(equalToConstant: 72).isActive = true
+        // Particle counts can reach eight digits, so reserve a little more
+        // room for that integer field without widening decimal controls.
+        field.widthAnchor.constraint(equalToConstant: isLogSlider ? 96 : 72).isActive = true
 
         if isPhone {
             let valueRow = UIStackView()
@@ -302,6 +304,6 @@ final class GeneralSettingsViewController: UIViewController {
         let minLog = log10(Float(minParticleCount))
         let maxLog = log10(Float(maxParticleCount))
         let clamped = Float(min(max(count, minParticleCount), maxParticleCount))
-        return (log(clamped) - minLog) / (maxLog - minLog)
+        return (log10(clamped) - minLog) / (maxLog - minLog)
     }
 }

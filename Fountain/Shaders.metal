@@ -257,28 +257,68 @@ vertex AxisVertexOutput axis_vertex(uint vid [[vertex_id]],
 {
     AxisVertexOutput out;
 
-    // 6 vertices: 3 lines × 2 endpoints each
-    // vid 0-1: X axis (red), vid 2-3: Y axis (green), vid 4-5: Z axis (blue)
-    uint lineIndex = vid / 2;
-    uint isEndpoint = vid % 2;
+    // 27 vertices: a screen-facing shaft (two triangles) and an arrowhead
+    // (one triangle) for each axis. Metal line primitives are only one pixel
+    // wide, which makes a world-space axis difficult to see against particles.
+    const uint axisIndex = vid / 9u;
+    const uint corner = vid % 9u;
+    const float axisLength = 1.5f;
+    const float axisHalfWidthNDC = 0.006f;
+    const float arrowLengthNDC = 0.035f;
+    const float arrowHalfWidthNDC = 0.018f;
 
-    const float axisLength = 1.0f;
+    // Keep the gizmo attached to the emitter frame.  The fountain tilts in the
+    // X/Y plane by this same rotation when its launch direction is calculated.
+    const float launch = clamp(uniforms.launchAngleRadians, 0.0f, M_PI_F * 0.5f);
+    const float3 localAxes[3] = {
+        float3(cos(launch), -sin(launch), 0.0f),
+        float3(sin(launch),  cos(launch), 0.0f),
+        float3(0.0f,         0.0f,         1.0f)
+    };
 
-    float3 pos;
     float3 color;
-
-    if (lineIndex == 0) {
-        pos = isEndpoint == 0 ? float3(0.0f) : float3(axisLength, 0.0f, 0.0f);
-        color = float3(1.0f, 0.0f, 0.0f);
-    } else if (lineIndex == 1) {
-        pos = isEndpoint == 0 ? float3(0.0f) : float3(0.0f, axisLength, 0.0f);
-        color = float3(0.0f, 1.0f, 0.0f);
+    if (axisIndex == 0u) {
+        color = float3(1.0f, 0.18f, 0.18f);
+    } else if (axisIndex == 1u) {
+        color = float3(0.18f, 1.0f, 0.28f);
     } else {
-        pos = isEndpoint == 0 ? float3(0.0f) : float3(0.0f, 0.0f, axisLength);
-        color = float3(0.0f, 0.0f, 1.0f);
+        color = float3(0.25f, 0.55f, 1.0f);
     }
 
-    out.position = uniforms.projectionMatrix * uniforms.viewMatrix * float4(pos, 1.0);
+    const float4 startClip = uniforms.projectionMatrix * uniforms.viewMatrix * float4(0.0f, 0.0f, 0.0f, 1.0f);
+    const float4 endClip = uniforms.projectionMatrix * uniforms.viewMatrix * float4(localAxes[axisIndex] * axisLength, 1.0f);
+    const float startW = max(abs(startClip.w), 0.0001f);
+    const float endW = max(abs(endClip.w), 0.0001f);
+    const float2 startNDC = startClip.xy / startW;
+    const float2 endNDC = endClip.xy / endW;
+    const float2 axisDelta = endNDC - startNDC;
+    const float axisDeltaLengthSquared = dot(axisDelta, axisDelta);
+    const float2 axisDirection = axisDeltaLengthSquared > 0.000001f
+        ? axisDelta * rsqrt(axisDeltaLengthSquared)
+        : float2(1.0f, 0.0f);
+    const float2 perpendicular = float2(-axisDirection.y, axisDirection.x);
+
+    float4 clipPosition;
+    if (corner < 6u) {
+        // Shaft vertex order: start-/start+/end-, end-/start+/end+.
+        const bool endpoint = corner == 2u || corner == 3u || corner == 5u;
+        const float side = (corner == 0u || corner == 2u || corner == 3u) ? -1.0f : 1.0f;
+        clipPosition = endpoint ? endClip : startClip;
+        clipPosition.xy += perpendicular * (side * axisHalfWidthNDC) * clipPosition.w;
+    } else {
+        // Arrowhead vertex order: tip, base-left, base-right.
+        const float2 arrowTip = endNDC + (axisDirection * arrowLengthNDC);
+        const float2 arrowBase = endNDC - (axisDirection * (arrowLengthNDC * 0.35f));
+        float2 arrowPosition = arrowTip;
+        if (corner == 7u) {
+            arrowPosition = arrowBase - (perpendicular * arrowHalfWidthNDC);
+        } else if (corner == 8u) {
+            arrowPosition = arrowBase + (perpendicular * arrowHalfWidthNDC);
+        }
+        clipPosition = float4(arrowPosition * endClip.w, endClip.z, endClip.w);
+    }
+
+    out.position = clipPosition;
     out.color = float4(color, 1.0);
     return out;
 }
