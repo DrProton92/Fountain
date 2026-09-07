@@ -1,6 +1,6 @@
 //
 //  ShaderTypes.h
-//  ipadgameapp
+//  Fountain
 //
 
 #ifndef ShaderTypes_h

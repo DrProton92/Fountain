@@ -1,6 +1,6 @@
 //
 //  Shaders.metal
-//  ipadgameapp
+//  Fountain
 //
 //  Created by Dave Schmid on 8/15/26.
 //

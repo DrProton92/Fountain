@@ -7,26 +7,26 @@
 	objects = {
 
 /* Begin PBXFileReference section */
-		B9FA4827303155AB000261E9 /* ipadgameapp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ipadgameapp.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		B9FA4827303155AB000261E9 /* Fountain.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Fountain.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		B9FA483B303155AB000261E9 /* Exceptions for "ipadgameapp" folder in "ipadgameapp" target */ = {
+		B9FA483B303155AB000261E9 /* Exceptions for "Fountain" folder in "Fountain" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
 			);
-			target = B9FA4826303155AB000261E9 /* ipadgameapp */;
+			target = B9FA4826303155AB000261E9 /* Fountain */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		B9FA4829303155AB000261E9 /* ipadgameapp */ = {
+		B9FA4829303155AB000261E9 /* Fountain */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
-				B9FA483B303155AB000261E9 /* Exceptions for "ipadgameapp" folder in "ipadgameapp" target */,
+				B9FA483B303155AB000261E9 /* Exceptions for "Fountain" folder in "Fountain" target */,
 			);
-			path = ipadgameapp;
+			path = Fountain;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -45,7 +45,7 @@
 		B9FA481E303155AB000261E9 = {
 			isa = PBXGroup;
 			children = (
-				B9FA4829303155AB000261E9 /* ipadgameapp */,
+				B9FA4829303155AB000261E9 /* Fountain */,
 				B9FA4828303155AB000261E9 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -53,7 +53,7 @@
 		B9FA4828303155AB000261E9 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				B9FA4827303155AB000261E9 /* ipadgameapp.app */,
+				B9FA4827303155AB000261E9 /* Fountain.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -61,9 +61,9 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		B9FA4826303155AB000261E9 /* ipadgameapp */ = {
+		B9FA4826303155AB000261E9 /* Fountain */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = B9FA483C303155AB000261E9 /* Build configuration list for PBXNativeTarget "ipadgameapp" */;
+			buildConfigurationList = B9FA483C303155AB000261E9 /* Build configuration list for PBXNativeTarget "Fountain" */;
 			buildPhases = (
 				B9FA4823303155AB000261E9 /* Sources */,
 				B9FA4824303155AB000261E9 /* Frameworks */,
@@ -74,13 +74,13 @@
 			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
-				B9FA4829303155AB000261E9 /* ipadgameapp */,
+				B9FA4829303155AB000261E9 /* Fountain */,
 			);
-			name = ipadgameapp;
+			name = Fountain;
 			packageProductDependencies = (
 			);
-			productName = ipadgameapp;
-			productReference = B9FA4827303155AB000261E9 /* ipadgameapp.app */;
+			productName = Fountain;
+			productReference = B9FA4827303155AB000261E9 /* Fountain.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -98,7 +98,7 @@
 					};
 				};
 			};
-			buildConfigurationList = B9FA4822303155AB000261E9 /* Build configuration list for PBXProject "ipadgameapp" */;
+			buildConfigurationList = B9FA4822303155AB000261E9 /* Build configuration list for PBXProject "Fountain" */;
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
@@ -112,7 +112,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				B9FA4826303155AB000261E9 /* ipadgameapp */,
+				B9FA4826303155AB000261E9 /* Fountain */,
 			);
 		};
 /* End PBXProject section */
@@ -147,7 +147,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 53G4ULGAJ7;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = ipadgameapp/Info.plist;
+				INFOPLIST_FILE = Fountain/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Fountain;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.entertainment";
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -183,7 +183,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 53G4ULGAJ7;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = ipadgameapp/Info.plist;
+				INFOPLIST_FILE = Fountain/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Fountain;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.entertainment";
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -332,7 +332,7 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		B9FA4822303155AB000261E9 /* Build configuration list for PBXProject "ipadgameapp" */ = {
+		B9FA4822303155AB000261E9 /* Build configuration list for PBXProject "Fountain" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				B9FA483F303155AB000261E9 /* Debug */,
@@ -341,7 +341,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		B9FA483C303155AB000261E9 /* Build configuration list for PBXNativeTarget "ipadgameapp" */ = {
+		B9FA483C303155AB000261E9 /* Build configuration list for PBXNativeTarget "Fountain" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				B9FA483D303155AB000261E9 /* Debug */,
