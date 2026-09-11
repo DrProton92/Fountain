@@ -8,6 +8,7 @@ class FountainAppViewController: UIViewController, UIGestureRecognizerDelegate {
 
     var renderer: Renderer!
     var mtkView: MTKView!
+    private let settingsManager = SettingsManager.shared
     private var inGameMenuButton: UIButton!
     private var gestureDebugLabel: UILabel!
     private var hasPresentedInitialConfiguration = false
@@ -40,6 +41,7 @@ class FountainAppViewController: UIViewController, UIGestureRecognizerDelegate {
         }
 
         renderer = newRenderer
+        settingsManager.bind(to: renderer)
         mtkView.delegate = renderer
         renderer.mtkView(mtkView, drawableSizeWillChange: mtkView.drawableSize)
 
@@ -214,7 +216,7 @@ class FountainAppViewController: UIViewController, UIGestureRecognizerDelegate {
         inGameMenuButton.isHidden = true
 
         let configVC = ConfigurationViewController()
-        configVC.renderer = renderer
+        configVC.settingsManager = settingsManager
         configVC.showsCancelButton = showCancelButton
         configVC.doneButtonTitle = doneTitle
         configVC.initialCategory = lastConfigurationCategory

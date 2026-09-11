@@ -154,6 +154,7 @@ final class SettingsManager {
     private(set) var settings: AppSettings
     private weak var renderer: Renderer?
     private let fileURL: URL
+    private var hasPersistedSettings = false
 
     init(fileURL: URL? = nil) {
         self.fileURL = fileURL ?? Self.defaultFileURL()
@@ -163,7 +164,11 @@ final class SettingsManager {
 
     func bind(to renderer: Renderer) {
         self.renderer = renderer
-        applyAllSettingsToRenderer()
+        // Renderer initializes to the same defaults. Avoid repeating all
+        // particle work on a first launch when there is no file to restore.
+        if hasPersistedSettings {
+            applyAllSettingsToRenderer()
+        }
     }
 
     func resetToDefaults() {
@@ -177,6 +182,7 @@ final class SettingsManager {
         let data = try Data(contentsOf: fileURL)
         settings = try Self.decoder.decode(AppSettings.self, from: data)
         normalize()
+        hasPersistedSettings = true
     }
 
     func save() throws {
@@ -276,31 +282,7 @@ final class SettingsManager {
 
     private func applyAllSettingsToRenderer() {
         guard let renderer else { return }
-        renderer.setParticleCount(settings.general.particleCount)
-        renderer.setLaunchAngle(settings.general.launchAngleDegrees)
-        renderer.setAngleVariance(settings.general.angleVarianceDegrees)
-        renderer.setVelocityVariance(settings.general.velocityVariancePercent)
-        renderer.setTrailsEnabled(settings.general.trailsEnabled)
-        renderer.setTrailLength(settings.general.trailLength)
-        renderer.setShowAxis(settings.general.showAxis)
-        renderer.setParticleColorStyle(settings.color.style)
-        renderer.setColorSpectrum(settings.color.spectrum)
-        renderer.setSingleColor(settings.color.spectrum.singleColor)
-        renderer.setParticleSizeMode(settings.size.mode)
-        renderer.setConstantParticleSize(settings.size.constantSize)
-        renderer.setSizeRange(settings.size.minRange, settings.size.maxRange)
-        renderer.setSizeDistribution(settings.size.distribution)
-        renderer.setSizeDistributionPreset(settings.size.preset)
-        renderer.setSizeSpectrumVariance(settings.size.variancePercent)
-        renderer.setParticleVelocityMode(settings.velocity.mode)
-        renderer.setConstantParticleVelocity(settings.velocity.constantVelocity)
-        renderer.setVelocityRange(settings.velocity.minRange, settings.velocity.maxRange)
-        renderer.setVelocityDistribution(settings.velocity.distribution)
-        renderer.setVelocityDistributionPreset(settings.velocity.preset)
-        renderer.setVelocitySpectrumVariance(settings.velocity.variancePercent)
-        renderer.setCameraControlMode(settings.camera.controlMode)
-        renderer.setCameraMotionModel(settings.camera.motionModel)
-        renderer.setCameraInclination(settings.camera.inclinationDegrees)
+        renderer.apply(settings: settings)
     }
 
     private static func defaultFileURL() -> URL {

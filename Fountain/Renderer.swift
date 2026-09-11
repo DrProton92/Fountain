@@ -479,6 +479,60 @@ class Renderer: NSObject, MTKViewDelegate {
         showAxis = enabled
     }
 
+    // Applies a complete settings snapshot in one pass. This is intentionally
+    // separate from the individual setters used by the live configuration UI:
+    // restoring settings during startup must not regenerate the particle
+    // system once for every field.
+    func apply(settings: AppSettings) {
+        let previousParticleCount = activeParticleCount
+        let newParticleCount = min(max(settings.general.particleCount, 1), maxRenderableParticleCount)
+
+        particleColorStyle = settings.color.style
+        colorSpectrum = settings.color.spectrum
+        particleSizeMode = settings.size.mode
+        constantParticleSize = max(0.5, min(settings.size.constantSize, 30.0))
+        sizeDistribution = settings.size.distribution
+        sizeDistributionPreset = settings.size.preset
+        sizeSpectrumVariancePercent = max(0.0, min(settings.size.variancePercent, 100.0))
+        minSizeRange = max(0.5, min(settings.size.minRange, 50.0))
+        maxSizeRange = max(minSizeRange, min(settings.size.maxRange, 50.0))
+
+        particleVelocityMode = settings.velocity.mode
+        constantParticleVelocity = max(0.005, min(settings.velocity.constantVelocity, 0.20))
+        velocityDistribution = settings.velocity.distribution
+        velocityDistributionPreset = settings.velocity.preset
+        velocitySpectrumVariancePercent = max(0.0, min(settings.velocity.variancePercent, 100.0))
+        minVelocityRange = max(0.005, min(settings.velocity.minRange, 0.20))
+        maxVelocityRange = max(minVelocityRange, min(settings.velocity.maxRange, 0.20))
+
+        launchAngleDegrees = max(0.0, min(settings.general.launchAngleDegrees, 90.0))
+        angleVarianceDegrees = max(0.0, min(settings.general.angleVarianceDegrees, 90.0))
+        velocityVariancePercent = max(0.0, min(settings.general.velocityVariancePercent, 100.0))
+        trailLength = max(1.0, min(settings.general.trailLength, Float(maxTrailHistorySamples)))
+        showAxis = settings.general.showAxis
+
+        cameraControlMode = settings.camera.controlMode
+        cameraMotionModel = settings.camera.motionModel
+        cameraInclinationDegrees = max(0.0, min(settings.camera.inclinationDegrees, 85.0))
+        if cameraControlMode == .motionModel {
+            cameraMotionStartTime = CACurrentMediaTime()
+        }
+
+        if newParticleCount > previousParticleCount {
+            initializeParticles(in: previousParticleCount..<newParticleCount)
+        }
+        activeParticleCount = newParticleCount
+        if settings.general.trailsEnabled && ensureTrailHistoryCapacity(requiredCount: activeParticleCount) {
+            trailsEnabled = true
+        } else {
+            trailsEnabled = false
+        }
+
+        applyColorStyle(in: 0..<activeParticleCount)
+        regenerateParticleSizes()
+        regenerateParticleLaunchVelocities()
+    }
+
     private func ensureTrailHistoryCapacity(requiredCount: Int) -> Bool {
         guard requiredCount > 0 else { return true }
         if let _ = trailHistoryBuffer, trailHistoryCapacity >= requiredCount {
@@ -811,10 +865,16 @@ class Renderer: NSObject, MTKViewDelegate {
             switch cameraMotionModel {
             case .orbit:
                 let angle = elapsed * 0.45
+                // Start with a circle in the X/Z plane, then tilt that whole
+                // plane about X. A nonzero inclination therefore puts the
+                // camera above the origin for half the orbit and below it for
+                // the other half, while maintaining a constant orbit radius.
+                let orbitX = radius * sin(angle)
+                let orbitZ = radius * cos(angle)
                 eye = SIMD3<Float>(
-                    radius * sin(angle),
-                    radius * cos(angle) * sin(inclination),
-                    radius * cos(angle) * cos(inclination)
+                    orbitX,
+                    orbitZ * sin(inclination),
+                    orbitZ * cos(inclination)
                 )
             case .figureEight:
                 let angle = elapsed * 0.55

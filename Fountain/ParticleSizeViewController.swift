@@ -5,7 +5,7 @@ import UIKit
 /// View controller for particle size configuration
 class ParticleSizeViewController: UIViewController {
     
-    var renderer: Renderer!
+    var settingsManager: SettingsManager!
     
     private var sizeMode: ParticleSizeMode = .constant
     private var constantSize: Float = 5.0
@@ -42,13 +42,13 @@ class ParticleSizeViewController: UIViewController {
 
         let isPhone = traitCollection.userInterfaceIdiom == .phone
         
-        sizeMode = renderer.particleSizeMode
-        constantSize = renderer.constantParticleSize
-        minSize = renderer.minSizeRange
-        maxSize = renderer.maxSizeRange
-        sizeSpectrumVariancePercent = renderer.sizeSpectrumVariancePercent
-        distribution = renderer.sizeDistribution
-        selectedPreset = renderer.sizeDistributionPreset
+        sizeMode = settingsManager.particleSizeMode
+        constantSize = settingsManager.constantParticleSize
+        minSize = settingsManager.minSizeRange
+        maxSize = settingsManager.maxSizeRange
+        sizeSpectrumVariancePercent = settingsManager.sizeSpectrumVariancePercent
+        distribution = settingsManager.sizeDistribution
+        selectedPreset = settingsManager.sizeDistributionPreset
         
         view.backgroundColor = .systemBackground
         
@@ -402,15 +402,15 @@ class ParticleSizeViewController: UIViewController {
     
     func applyConfiguration() {
         guard isViewLoaded else { return }
-        renderer.setParticleSizeMode(sizeMode)
-        renderer.setSizeSpectrumVariance(sizeSpectrumVariancePercent)
+        settingsManager.setParticleSizeMode(sizeMode)
+        settingsManager.setSizeSpectrumVariance(sizeSpectrumVariancePercent)
         switch sizeMode {
         case .constant:
-            renderer.setConstantParticleSize(constantSize)
+            settingsManager.setConstantParticleSize(constantSize)
         case .random:
-            renderer.setSizeRange(minSize, maxSize)
-            renderer.setSizeDistribution(distribution)
-            renderer.setSizeDistributionPreset(selectedPreset)
+            settingsManager.setSizeRange(minSize, maxSize)
+            settingsManager.setSizeDistribution(distribution)
+            settingsManager.setSizeDistributionPreset(selectedPreset)
         }
     }
 

@@ -22,7 +22,7 @@ enum ConfigurationCategory: Int, CaseIterable {
 
 class ConfigurationViewController: UIViewController {
     
-    var renderer: Renderer!
+    var settingsManager: SettingsManager!
     var doneButtonTitle: String = "OK"
     var showsCancelButton: Bool = true
     var initialCategory: ConfigurationCategory = .general
@@ -66,15 +66,15 @@ class ConfigurationViewController: UIViewController {
         )
 
         generalSettingsViewController = GeneralSettingsViewController()
-        generalSettingsViewController.renderer = renderer
+        generalSettingsViewController.settingsManager = settingsManager
         particleColorSettingsViewController = ParticleColorViewController()
-        particleColorSettingsViewController.renderer = renderer
+        particleColorSettingsViewController.settingsManager = settingsManager
         particleSizeSettingsViewController = ParticleSizeViewController()
-        particleSizeSettingsViewController.renderer = renderer
+        particleSizeSettingsViewController.settingsManager = settingsManager
         particleVelocitySettingsViewController = ParticleVelocityViewController()
-        particleVelocitySettingsViewController.renderer = renderer
+        particleVelocitySettingsViewController.settingsManager = settingsManager
         cameraSettingsViewController = CameraViewController()
-        cameraSettingsViewController.renderer = renderer
+        cameraSettingsViewController.settingsManager = settingsManager
         
         // Setup split view
         setupSplitView()
@@ -188,7 +188,7 @@ class ConfigurationViewController: UIViewController {
     
     @objc private func doneTapped() {
         // Only apply categories the user has actually opened; otherwise we risk
-        // writing each controller's default property values back into the renderer.
+        // writing each controller's default property values back into settings.
         if generalSettingsViewController.isViewLoaded {
             generalSettingsViewController.applyConfiguration()
         }

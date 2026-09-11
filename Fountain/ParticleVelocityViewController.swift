@@ -3,7 +3,7 @@ import UIKit
 
 final class ParticleVelocityViewController: UIViewController {
 
-    var renderer: Renderer!
+    var settingsManager: SettingsManager!
 
     private var velocityMode: ParticleSizeMode = .constant
     private var constantVelocity: Float = 0.04
@@ -43,13 +43,13 @@ final class ParticleVelocityViewController: UIViewController {
 
         let isPhone = traitCollection.userInterfaceIdiom == .phone
 
-        velocityMode = renderer.particleVelocityMode
-        constantVelocity = renderer.constantParticleVelocity
-        minVelocity = renderer.minVelocityRange
-        maxVelocity = renderer.maxVelocityRange
-        velocitySpectrumVariancePercent = renderer.velocitySpectrumVariancePercent
-        selectedPreset = renderer.velocityDistributionPreset
-        distribution = renderer.velocityDistribution
+        velocityMode = settingsManager.particleVelocityMode
+        constantVelocity = settingsManager.constantParticleVelocity
+        minVelocity = settingsManager.minVelocityRange
+        maxVelocity = settingsManager.maxVelocityRange
+        velocitySpectrumVariancePercent = settingsManager.velocitySpectrumVariancePercent
+        selectedPreset = settingsManager.velocityDistributionPreset
+        distribution = settingsManager.velocityDistribution
 
         view.backgroundColor = .systemBackground
 
@@ -403,15 +403,15 @@ final class ParticleVelocityViewController: UIViewController {
 
     func applyConfiguration() {
         guard isViewLoaded else { return }
-        renderer.setParticleVelocityMode(velocityMode)
-        renderer.setVelocitySpectrumVariance(velocitySpectrumVariancePercent)
+        settingsManager.setParticleVelocityMode(velocityMode)
+        settingsManager.setVelocitySpectrumVariance(velocitySpectrumVariancePercent)
         switch velocityMode {
         case .constant:
-            renderer.setConstantParticleVelocity(constantVelocity)
+            settingsManager.setConstantParticleVelocity(constantVelocity)
         case .random:
-            renderer.setVelocityRange(minVelocity, maxVelocity)
-            renderer.setVelocityDistribution(distribution)
-            renderer.setVelocityDistributionPreset(selectedPreset)
+            settingsManager.setVelocityRange(minVelocity, maxVelocity)
+            settingsManager.setVelocityDistribution(distribution)
+            settingsManager.setVelocityDistributionPreset(selectedPreset)
         }
     }
 

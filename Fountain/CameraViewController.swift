@@ -3,7 +3,7 @@ import UIKit
 
 final class CameraViewController: UIViewController {
 
-    var renderer: Renderer!
+    var settingsManager: SettingsManager!
 
     private var cameraControlMode: CameraControlMode = .touchControlled
     private var cameraMotionModel: CameraMotionModel = .orbit
@@ -18,9 +18,9 @@ final class CameraViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
 
-        cameraControlMode = renderer.cameraControlMode
-        cameraMotionModel = renderer.cameraMotionModel
-        cameraInclinationDegrees = renderer.cameraInclinationDegrees
+        cameraControlMode = settingsManager.cameraControlMode
+        cameraMotionModel = settingsManager.cameraMotionModel
+        cameraInclinationDegrees = settingsManager.cameraInclinationDegrees
 
         view.backgroundColor = .systemBackground
 
@@ -122,9 +122,9 @@ final class CameraViewController: UIViewController {
     }
 
     func applyConfiguration() {
-        renderer.setCameraControlMode(cameraControlMode)
-        renderer.setCameraMotionModel(cameraMotionModel)
-        renderer.setCameraInclination(cameraInclinationDegrees)
+        settingsManager.setCameraControlMode(cameraControlMode)
+        settingsManager.setCameraMotionModel(cameraMotionModel)
+        settingsManager.setCameraInclination(cameraInclinationDegrees)
     }
 
     private func sanitizeInclinationField(_ field: UITextField, fallback: Float) -> Float {

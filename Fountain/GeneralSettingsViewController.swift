@@ -2,7 +2,7 @@ import UIKit
 
 final class GeneralSettingsViewController: UIViewController {
     
-    var renderer: Renderer!
+    var settingsManager: SettingsManager!
     private var particleCount: Int = 10000
     private let minParticleCount = 100
     private var launchAngleDegrees: Float = 0.0
@@ -26,12 +26,12 @@ final class GeneralSettingsViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         
-        particleCount = renderer.activeParticleCount
-        launchAngleDegrees = renderer.launchAngleDegrees
-        angleVarianceDegrees = renderer.angleVarianceDegrees
-        trailsEnabled = renderer.trailsEnabled
-        trailLength = renderer.trailLength
-        showAxis = renderer.showAxis
+        particleCount = settingsManager.activeParticleCount
+        launchAngleDegrees = settingsManager.launchAngleDegrees
+        angleVarianceDegrees = settingsManager.angleVarianceDegrees
+        trailsEnabled = settingsManager.trailsEnabled
+        trailLength = settingsManager.trailLength
+        showAxis = settingsManager.showAxis
         view.backgroundColor = .systemBackground
         
         let scrollView = UIScrollView()
@@ -137,12 +137,12 @@ final class GeneralSettingsViewController: UIViewController {
     }
     
     func applyConfiguration() {
-        renderer.setParticleCount(particleCount)
-        renderer.setLaunchAngle(launchAngleDegrees)
-        renderer.setAngleVariance(angleVarianceDegrees)
-        renderer.setTrailsEnabled(trailsEnabled)
-        renderer.setTrailLength(trailLength)
-        renderer.setShowAxis(showAxis)
+        settingsManager.setParticleCount(particleCount)
+        settingsManager.setLaunchAngle(launchAngleDegrees)
+        settingsManager.setAngleVariance(angleVarianceDegrees)
+        settingsManager.setTrailsEnabled(trailsEnabled)
+        settingsManager.setTrailLength(trailLength)
+        settingsManager.setShowAxis(showAxis)
     }
 
     private func wireEvents() {
@@ -198,7 +198,7 @@ final class GeneralSettingsViewController: UIViewController {
         axisSwitch.addAction(UIAction { [weak self] _ in
             guard let self else { return }
             self.showAxis = self.axisSwitch.isOn
-            self.renderer.setShowAxis(self.showAxis)
+            self.settingsManager.setShowAxis(self.showAxis)
         }, for: .valueChanged)
 
         trailLengthSlider.addAction(UIAction { [weak self] _ in

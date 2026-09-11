@@ -51,9 +51,12 @@ func matrix_look_at_right_hand(eye: SIMD3<Float>, target: SIMD3<Float>, up: SIMD
     )
 
     return matrix_float4x4(columns: (
-        SIMD4<Float>(xAxis.x, xAxis.y, xAxis.z, 0),
-        SIMD4<Float>(yAxis.x, yAxis.y, yAxis.z, 0),
-        SIMD4<Float>(zAxis.x, zAxis.y, zAxis.z, 0),
+        // matrix_float4x4 is column-major. Store the camera basis as rows
+        // (transposed into columns) so world positions are projected into the
+        // camera's right/up/forward coordinate frame correctly.
+        SIMD4<Float>(xAxis.x, yAxis.x, zAxis.x, 0),
+        SIMD4<Float>(xAxis.y, yAxis.y, zAxis.y, 0),
+        SIMD4<Float>(xAxis.z, yAxis.z, zAxis.z, 0),
         SIMD4<Float>(translation.x, translation.y, translation.z, 1)
     ))
 

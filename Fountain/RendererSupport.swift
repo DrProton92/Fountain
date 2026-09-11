@@ -12,7 +12,7 @@ enum RendererError: Error {
     case pipelineCreationFailed
 }
 
-enum ParticleColorStyle: Int, CaseIterable {
+enum ParticleColorStyle: Int, CaseIterable, Codable {
     case singleColor
     case rainbow
     case fire
@@ -34,7 +34,7 @@ enum ParticleColorStyle: Int, CaseIterable {
     }
 }
 
-enum ParticleSizeMode: Int, CaseIterable {
+enum ParticleSizeMode: Int, CaseIterable, Codable {
     case constant
     case random
 
@@ -46,7 +46,7 @@ enum ParticleSizeMode: Int, CaseIterable {
     }
 }
 
-enum CameraControlMode: Int, CaseIterable {
+enum CameraControlMode: Int, CaseIterable, Codable {
     case touchControlled
     case motionModel
 
@@ -58,7 +58,7 @@ enum CameraControlMode: Int, CaseIterable {
     }
 }
 
-enum CameraMotionModel: Int, CaseIterable {
+enum CameraMotionModel: Int, CaseIterable, Codable {
     case orbit
     case figureEight
 
@@ -70,7 +70,7 @@ enum CameraMotionModel: Int, CaseIterable {
     }
 }
 
-enum SizeDistributionPreset: Int, CaseIterable {
+enum SizeDistributionPreset: Int, CaseIterable, Codable {
     case gaussian
     case skewedLeft
     case skewedRight

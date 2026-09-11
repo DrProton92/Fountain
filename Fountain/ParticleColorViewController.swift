@@ -354,7 +354,7 @@ final class SpectrumEditorView: UIView {
 
 final class ParticleColorViewController: UIViewController {
     
-    var renderer: Renderer!
+    var settingsManager: SettingsManager!
     private var isSingleColorMode = true
     private var selectedSpectrumPreset: ParticleColorStyle = .rainbow
     private var spectrum: ColorSpectrum = ColorSpectrum()
@@ -377,10 +377,10 @@ final class ParticleColorViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         
-        isSingleColorMode = renderer.particleColorStyle == .singleColor
-        spectrum = renderer.colorSpectrum
-        selectedSpectrumPreset = renderer.colorSpectrum.preset == .singleColor ? .rainbow : renderer.colorSpectrum.preset
-        selectedSingleColor = UIColor(cgColor: CGColor(red: CGFloat(renderer.colorSpectrum.singleColor.x), green: CGFloat(renderer.colorSpectrum.singleColor.y), blue: CGFloat(renderer.colorSpectrum.singleColor.z), alpha: CGFloat(renderer.colorSpectrum.singleColor.w)))
+        isSingleColorMode = settingsManager.particleColorStyle == .singleColor
+        spectrum = settingsManager.colorSpectrum
+        selectedSpectrumPreset = settingsManager.colorSpectrum.preset == .singleColor ? .rainbow : settingsManager.colorSpectrum.preset
+        selectedSingleColor = UIColor(cgColor: CGColor(red: CGFloat(settingsManager.colorSpectrum.singleColor.x), green: CGFloat(settingsManager.colorSpectrum.singleColor.y), blue: CGFloat(settingsManager.colorSpectrum.singleColor.z), alpha: CGFloat(settingsManager.colorSpectrum.singleColor.w)))
         view.backgroundColor = .systemBackground
         
         let scrollView = UIScrollView()
@@ -423,7 +423,7 @@ final class ParticleColorViewController: UIViewController {
             guard let self else { return }
             self.selectedSingleColor = uiColor
             if self.isSingleColorMode {
-                self.renderer.setSingleColor(uiColor.toSIMD4Float())
+                self.settingsManager.setSingleColor(uiColor.toSIMD4Float())
             }
         }
         wheelContainer.addArrangedSubview(colorWheelView)
@@ -446,7 +446,7 @@ final class ParticleColorViewController: UIViewController {
         spectrumEditor.heightAnchor.constraint(equalToConstant: 240).isActive = true
         spectrumEditor.onSpectrumChanged = { [weak self] newSpectrum in
             self?.spectrum = newSpectrum
-            self?.renderer.setColorSpectrum(newSpectrum)
+            self?.settingsManager.setColorSpectrum(newSpectrum)
         }
         spectrumContainer.addArrangedSubview(spectrumEditor)
 
@@ -528,15 +528,15 @@ final class ParticleColorViewController: UIViewController {
     @objc private func colorModeChanged(_ sender: UISegmentedControl) {
         if sender.selectedSegmentIndex == 0 {
             isSingleColorMode = true
-            renderer.setParticleColorStyle(.singleColor)
-            renderer.setSingleColor(selectedSingleColor.toSIMD4Float())
+            settingsManager.setParticleColorStyle(.singleColor)
+            settingsManager.setSingleColor(selectedSingleColor.toSIMD4Float())
         } else {
             isSingleColorMode = false
             if spectrum.preset == .singleColor {
                 spectrum.applyPreset(selectedSpectrumPreset)
                 spectrumEditor.spectrum = spectrum
             }
-            renderer.setColorSpectrum(spectrum)
+            settingsManager.setColorSpectrum(spectrum)
         }
         updateModeVisibility()
     }
@@ -547,17 +547,17 @@ final class ParticleColorViewController: UIViewController {
         isSingleColorMode = false
         spectrum.applyPreset(style)
         spectrumEditor.spectrum = spectrum
-        renderer.setColorSpectrum(spectrum)
+        settingsManager.setColorSpectrum(spectrum)
         updateModeVisibility()
     }
     
     func applyConfiguration() {
         guard isViewLoaded else { return }
         if isSingleColorMode {
-            renderer.setParticleColorStyle(.singleColor)
-            renderer.setSingleColor(selectedSingleColor.toSIMD4Float())
+            settingsManager.setParticleColorStyle(.singleColor)
+            settingsManager.setSingleColor(selectedSingleColor.toSIMD4Float())
         } else {
-            renderer.setColorSpectrum(spectrum)
+            settingsManager.setColorSpectrum(spectrum)
         }
     }
 
